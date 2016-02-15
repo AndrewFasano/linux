@@ -182,4 +182,18 @@ source "drivers/thunderbolt/Kconfig"
 
 source "drivers/android/Kconfig"
 
+source "drivers/nvdimm/Kconfig"
+
+source "drivers/dax/Kconfig"
+
+source "drivers/nvmem/Kconfig"
+
+source "drivers/hwtracing/stm/Kconfig"
+
+source "drivers/hwtracing/intel_th/Kconfig"
+
+source "drivers/fpga/Kconfig"
+
+source "drivers/firmadyne/Kconfig"
+
 endmenu
