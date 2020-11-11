@@ -1703,6 +1703,7 @@ static void libkip_listen(struct socket *sock, int backlog)
 		if (err < 0)
 			return;
 
+		memset(&addr_vsock, 0, sizeof(addr_vsock));
 		addr_vsock.svm_family = AF_VSOCK;
 		addr_vsock.svm_cid = VMADDR_CID_ANY;
 		addr_vsock.svm_port = VMADDR_PORT_ANY;
