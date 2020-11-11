@@ -68,6 +68,7 @@ struct vsock_sock {
 	u32 peer_shutdown;
 	bool sent_request;
 	bool ignore_connecting_rst;
+	struct socket *wrapped_socket;
 
 	/* Protected by lock_sock(sk) */
 	u64 buffer_size;
@@ -170,6 +171,9 @@ struct vsock_transport {
 	/* Control functions. */
 	int (*control_connect)(struct vsock_sock *,
 			       struct sockaddr *, size_t);
+	int (*control_listen)(struct vsock_sock *,
+			      struct sockaddr *, size_t);
+	int (*control_close)(struct vsock_sock *);
 };
 
 /**** CORE ****/

@@ -443,6 +443,10 @@ static void virtio_vsock_rx_done(struct virtqueue *vq)
 	queue_work(virtio_vsock_workqueue, &vsock->rx_work);
 }
 
+static int virtio_transport_control_listen(struct vsock_sock *vsk,
+					   struct sockaddr *address, size_t len);
+static int virtio_transport_control_close(struct vsock_sock *vsk);
+
 static struct virtio_transport virtio_transport = {
 	.transport = {
 		.module                   = THIS_MODULE,
@@ -482,10 +486,45 @@ static struct virtio_transport virtio_transport = {
 		.notify_buffer_size       = virtio_transport_notify_buffer_size,
 
 		.control_connect          = virtio_transport_control_connect,
+		.control_listen           = virtio_transport_control_listen,
+		.control_close            = virtio_transport_control_close,
 	},
 
 	.send_pkt = virtio_transport_send_pkt,
 };
+
+static int virtio_transport_control_listen(struct vsock_sock *vsk,
+					   struct sockaddr *address, size_t len)
+{
+	struct virtio_vsock_pkt_control control = {
+		.op = VIRTIO_VSOCK_OP_WRAP_LISTEN,
+		.type = VIRTIO_VSOCK_TYPE_STREAM,
+		.remote_cid = VMADDR_CID_HOST,
+		.remote_port = 0, /* XXX: is it needed? */
+		.address = address,
+		.pkt_len = len,
+	};
+	u32 src_cid = virtio_transport_get_local_cid();
+	u32 src_port = vsk->local_addr.svm_port;
+
+	return virtio_transport_control_no_sock(&virtio_transport, &control,
+						src_cid, src_port);
+}
+
+static int virtio_transport_control_close(struct vsock_sock *vsk)
+{
+	struct virtio_vsock_pkt_control control = {
+		.op = VIRTIO_VSOCK_OP_WRAP_CLOSE,
+		.type = VIRTIO_VSOCK_TYPE_STREAM,
+		.remote_cid = VMADDR_CID_HOST,
+		.remote_port = 0, /* XXX: is it needed? */
+	};
+	u32 src_cid = virtio_transport_get_local_cid();
+	u32 src_port = vsk->local_addr.svm_port;
+
+	return virtio_transport_control_no_sock(&virtio_transport, &control,
+						src_cid, src_port);
+}
 
 static void virtio_transport_rx_work(struct work_struct *work)
 {

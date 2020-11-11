@@ -160,5 +160,8 @@ void virtio_transport_deliver_tap_pkt(struct virtio_vsock_pkt *pkt);
 int virtio_transport_control_connect(struct vsock_sock *vsk,
 				     struct sockaddr *address,
 				     size_t len);
+int virtio_transport_control_no_sock(const struct virtio_transport *t,
+				     struct virtio_vsock_pkt_control *control,
+				     u32 src_cid, u32 src_port);
 
 #endif /* _LINUX_VIRTIO_VSOCK_H */

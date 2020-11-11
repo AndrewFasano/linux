@@ -95,6 +95,7 @@
 #include <net/cls_cgroup.h>
 
 #include <net/sock.h>
+#include <net/af_vsock.h>
 #include <linux/netfilter.h>
 
 #include <linux/if_tun.h>
@@ -589,6 +590,11 @@ EXPORT_SYMBOL(sock_alloc);
 
 static void __sock_release(struct socket *sock, struct inode *inode)
 {
+	if (sock->sk && sock->sk->sk_vsock) {
+		sock_release(sock->sk->sk_vsock);
+		sock->sk->sk_vsock = NULL;
+	}
+
 	if (sock->ops) {
 		struct module *owner = sock->ops->owner;
 
@@ -1250,6 +1256,7 @@ static __poll_t sock_poll(struct file *file, poll_table *wait)
 {
 	struct socket *sock = file->private_data;
 	__poll_t events = poll_requested_events(wait), flag = 0;
+	struct socket *vsock = sock->sk->sk_vsock;
 
 	if (!sock->ops->poll)
 		return 0;
@@ -1263,7 +1270,13 @@ static __poll_t sock_poll(struct file *file, poll_table *wait)
 		flag = POLL_BUSY_LOOP;
 	}
 
-	return sock->ops->poll(file, sock, wait) | flag;
+
+	events = sock->ops->poll(file, sock, wait) | flag;
+
+	if (vsock)
+		events |= vsock->ops->poll(file, vsock, wait);
+
+	return events;
 }
 
 static int sock_mmap(struct file *file, struct vm_area_struct *vma)
@@ -1668,6 +1681,55 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 	return __sys_bind(fd, umyaddr, addrlen);
 }
 
+static void libkip_listen(struct socket *sock, int backlog)
+{
+	struct sockaddr_storage address;
+	struct sockaddr_vm addr_vsock;
+	struct socket *vsock;
+	int err;
+
+	err = sock->ops->getname(sock, (struct sockaddr *)&address, 0);
+	if (err < 0) {
+		return;
+	}
+
+	sock->sk->sk_vsock = NULL;
+
+	if (!(address.ss_family == AF_UNIX || address.ss_family == AF_INET))
+		return;
+
+	printk("listen: attempting to impersonate with a VSOCK\n");
+
+	err = sock_create(AF_VSOCK, SOCK_STREAM, 0, &vsock);
+	if (err < 0)
+		return;
+
+	addr_vsock.svm_family = AF_VSOCK;
+	addr_vsock.svm_cid = VMADDR_CID_ANY;
+	addr_vsock.svm_port = VMADDR_PORT_ANY;
+
+	err = vsock->ops->bind(vsock, (struct sockaddr *)&addr_vsock,
+			      sizeof(addr_vsock));
+	if (err < 0)
+		goto out;
+
+	err = vsock->ops->listen(vsock, backlog);
+	if (err < 0)
+		goto out;
+
+	/* HACK */
+	err = vsock->ops->socketpair(vsock, sock);
+	if (err < 0)
+		goto out;
+
+	sock->sk->sk_vsock = vsock;
+	printk("listen: VSOCK impersonation done!\n");
+
+	return;
+out:
+	printk("listen: VSOCK impersonation FAILED! err:%d\n", err);
+	sock_release(vsock);
+}
 /*
  *	Perform a listen. Basically, we allow the protocol to do anything
  *	necessary for a listen, and if that works, we mark the socket as
@@ -1690,6 +1752,9 @@ int __sys_listen(int fd, int backlog)
 		if (!err)
 			err = sock->ops->listen(sock, backlog);
 
+		if (!err)
+			libkip_listen(sock, backlog);
+
 		fput_light(sock->file, fput_needed);
 	}
 	return err;
@@ -1709,6 +1774,7 @@ int __sys_accept4_file(struct file *file, unsigned file_flags,
 	struct file *newfile;
 	int err, len, newfd;
 	struct sockaddr_storage address;
+	struct socket *vsock;
 
 	if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
 		return -EINVAL;
@@ -1751,8 +1817,71 @@ int __sys_accept4_file(struct file *file, unsigned file_flags,
 	if (err)
 		goto out_fd;
 
-	err = sock->ops->accept(sock, newsock, sock->file->f_flags | file_flags,
+	vsock = sock->sk->sk_vsock;
+
+	if (vsock) {
+		long timeout = sock_rcvtimeo(sock->sk, flags & O_NONBLOCK);
+		DEFINE_WAIT(wait);
+		int waiting = 1;
+		struct socket *newvsock;
+		struct file *newvfile;
+
+		printk("accept: vsock wrapping %p\n", vsock);
+
+		newvsock = sock_alloc();
+		if (!newsock)
+			goto out;
+
+		newvsock->type = vsock->type;
+		newvsock->ops = vsock->ops;
+
+		newvfile = sock_alloc_file(newvsock, flags, vsock->sk->sk_prot_creator->name);
+		if (IS_ERR(newvfile)) {
+			err = PTR_ERR(newvfile);
+			put_unused_fd(newfd);
+			goto out;
+		}
+
+		file_flags |= O_NONBLOCK;
+
+		prepare_to_wait(sk_sleep(sock->sk), &wait, TASK_INTERRUPTIBLE);
+		prepare_to_wait(sk_sleep(vsock->sk), &wait, TASK_INTERRUPTIBLE);
+
+		while (waiting) {
+			err = sock->ops->accept(sock, newsock,
+					sock->file->f_flags | file_flags,
 					false);
+			if (err >= 0 || err != -EAGAIN) {
+				break;
+			}
+
+			err = vsock->ops->accept(vsock, newvsock,
+					sock->file->f_flags | file_flags,
+					false);
+			if (err >= 0 || err != -EAGAIN) {
+				newsock = newvsock;
+				newfile = newvfile;
+				break;
+			}
+
+			timeout = schedule_timeout(timeout);
+			if (signal_pending(current)) {
+				err = sock_intr_errno(timeout);
+				break;
+			} else if (timeout == 0) {
+				err = -EAGAIN;
+				break;
+			}
+		}
+
+		finish_wait(sk_sleep(sock->sk), &wait);
+		finish_wait(sk_sleep(vsock->sk), &wait);
+	} else {
+		err = sock->ops->accept(sock, newsock,
+					sock->file->f_flags | file_flags,
+					false);
+	}
+
 	if (err < 0)
 		goto out_fd;
 
@@ -1858,7 +1987,7 @@ int __sys_connect_file(struct file *file, struct sockaddr_storage *address,
 		int ret;
 		int addr_len;
 
-		printk("attempting to impersonate with a VSOCK");
+		printk("attempting to impersonate with a VSOCK\n");
 
 		ret = sock_create(AF_VSOCK, SOCK_STREAM, 0, &vsock);
 		if (ret < 0)
@@ -1873,14 +2002,14 @@ int __sys_connect_file(struct file *file, struct sockaddr_storage *address,
 		ret = vsock->ops->connect(vsock, (struct sockaddr *)address,
 		    addr_len, /*sock->file->f_flags | file_flags*/ 0);
 		if (ret == 0 /*|| err == -EINPROGRESS*/) {
-			printk("VSOCK conn impersonated");
+			printk("VSOCK conn impersonated\n");
 			vsock->file = sock->file;
 			vsock->file->private_data = vsock;
 			err = ret;
 			//sock->file = NULL;
 			//sock_release(sock);
 		} else {
-			printk("failed to establish VSOCK conn: %d", ret);
+			printk("failed to establish VSOCK conn: %d\n", ret);
 			sock_release(vsock);
 		}
 	}

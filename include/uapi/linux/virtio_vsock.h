@@ -86,6 +86,12 @@ enum virtio_vsock_op {
 
         /* Connect request with extended parameters */
 	VIRTIO_VSOCK_OP_REQUEST_EX = 8,
+
+	/* Listen request for wrapped socket */
+	VIRTIO_VSOCK_OP_WRAP_LISTEN = 9,
+
+	/* Close request for wrapped socket */
+        VIRTIO_VSOCK_OP_WRAP_CLOSE = 10,
 };
 
 /* VIRTIO_VSOCK_OP_SHUTDOWN flags values */

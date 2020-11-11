@@ -587,6 +587,59 @@ out:
 	sock_put(listener);
 }
 
+static int vsock_wrap_listen(struct socket *vsock, struct socket *sock)
+{
+	struct sockaddr_in * local_addr;
+	struct sockaddr_storage addr;
+	struct vsock_sock *vsk;
+	struct sock *sk;
+	int err, addr_len = 0;
+
+	sk = vsock->sk;
+	if (sk->sk_state != TCP_LISTEN ||
+	    !transport_g2h || !transport_g2h->control_listen)
+		return -EINVAL;
+
+	vsk = vsock_sk(sk);
+
+	err = sock->ops->getname(sock, (struct sockaddr *) &addr, 0);
+	if (err < 0)
+		return err;
+
+	if (addr.ss_family == AF_UNIX) {
+		addr_len = sizeof(struct sockaddr_un);
+	} else if (addr.ss_family == AF_INET) {
+		addr_len = sizeof(struct sockaddr_in);
+	} else {
+		return -EINVAL;
+	}
+
+	vsk->wr_sa_family = addr.ss_family;
+	memcpy(&vsk->wr_remote_addr, &addr, addr_len);
+
+	local_addr = (struct sockaddr_in *) &vsk->wr_local_addr;
+	local_addr->sin_family = AF_INET;
+	local_addr->sin_port = htons(1234);
+	local_addr->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+	err = transport_g2h->control_listen(vsk, (struct sockaddr *) &addr, addr_len);
+	if (err < 0)
+		return err;
+
+	vsk->wrapped_socket = sock;
+
+	return 0;
+}
+
+static void vsock_wrap_close(struct vsock_sock *vsk)
+{
+	if (!transport_g2h || !transport_g2h->control_close)
+		return;
+
+	(void)transport_g2h->control_close(vsk);
+	vsk->wrapped_socket = NULL;
+}
+
 /**** SOCKET OPERATIONS ****/
 
 static int __vsock_bind_stream(struct vsock_sock *vsk,
@@ -767,6 +820,9 @@ static void __vsock_release(struct sock *sk, int level)
 		 * is the same as lock_sock(sk).
 		 */
 		lock_sock_nested(sk, level);
+
+		if (vsk->wrapped_socket)
+			vsock_wrap_close(vsk);
 
 		if (vsk->transport)
 			vsk->transport->release(vsk);
@@ -1454,6 +1510,12 @@ out:
 	return err;
 }
 
+/* HACK */
+static int vsock_socketpair(struct socket *sock1, struct socket *sock2)
+{
+	return vsock_wrap_listen(sock1, sock2);
+}
+
 static int vsock_accept(struct socket *sock, struct socket *newsock, int flags,
 			bool kern)
 {
@@ -2060,7 +2122,7 @@ static const struct proto_ops vsock_stream_ops = {
 	.release = vsock_release,
 	.bind = vsock_bind,
 	.connect = vsock_stream_connect,
-	.socketpair = sock_no_socketpair,
+	.socketpair = vsock_socketpair,
 	.accept = vsock_accept,
 	.getname = vsock_getname,
 	.poll = vsock_poll,

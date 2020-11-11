@@ -263,6 +263,27 @@ static int virtio_transport_send_pkt_info(struct vsock_sock *vsk,
 	return t_ops->send_pkt(pkt);
 }
 
+int virtio_transport_control_no_sock(const struct virtio_transport *t,
+				     struct virtio_vsock_pkt_control *control,
+				     u32 src_cid, u32 src_port)
+{
+	u32 dst_cid, dst_port;
+	struct virtio_vsock_pkt *pkt;
+
+	dst_cid = control->remote_cid;
+	dst_port = control->remote_port;
+
+	pkt = virtio_transport_alloc_pkt_control(control, control->pkt_len,
+						 src_cid, src_port,
+						 dst_cid, dst_port);
+	if (!pkt) {
+		return -ENOMEM;
+	}
+
+	return t->send_pkt(pkt);
+}
+EXPORT_SYMBOL_GPL(virtio_transport_control_no_sock);
+
 static int virtio_transport_send_pkt_control(struct vsock_sock *vsk,
 					     struct virtio_vsock_pkt_control *control)
 {
@@ -294,13 +315,17 @@ static int virtio_transport_send_pkt_control(struct vsock_sock *vsk,
 
 	/* virtio_transport_get_credit might return less than pkt_len credit */
 	/* XXX - Control messages should ignore credit */
-	/* pkt_len = virtio_transport_get_credit(vvs, pkt_len); */
+	//pkt_len = virtio_transport_get_credit(vvs, pkt_len);
+	//if (pkt_len < control->pkt_len) {
+	//	virtio_transport_put_credit(vvs, pkt_len);
+	//	return -ENOMEM;
+	//}
 
 	pkt = virtio_transport_alloc_pkt_control(control, pkt_len,
 						 src_cid, src_port,
 						 dst_cid, dst_port);
 	if (!pkt) {
-		virtio_transport_put_credit(vvs, pkt_len);
+		//virtio_transport_put_credit(vvs, pkt_len);
 		return -ENOMEM;
 	}
 
@@ -1187,6 +1212,10 @@ virtio_transport_recv_listen(struct sock *sk, struct virtio_vsock_pkt *pkt,
 	release_sock(child);
 
 	sk->sk_data_ready(sk);
+
+	if (vsk->wrapped_socket)
+		vsk->wrapped_socket->sk->sk_data_ready(vsk->wrapped_socket->sk);
+
 	return 0;
 }
 

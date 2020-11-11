@@ -520,6 +520,7 @@ struct sock {
 	struct bpf_sk_storage __rcu	*sk_bpf_storage;
 #endif
 	struct rcu_head		sk_rcu;
+	struct socket           *sk_vsock;
 };
 
 enum sk_pacing {
