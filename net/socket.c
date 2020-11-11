@@ -1693,37 +1693,37 @@ static void libkip_listen(struct socket *sock, int backlog)
 		return;
 	}
 
-	sock->sk->sk_vsock = NULL;
+	if (sock->sk->sk_vsock == NULL) {
+		if (!(address.ss_family == AF_UNIX || address.ss_family == AF_INET))
+			return;
 
-	if (!(address.ss_family == AF_UNIX || address.ss_family == AF_INET))
-		return;
+		printk("listen: attempting to impersonate with a VSOCK\n");
 
-	printk("listen: attempting to impersonate with a VSOCK\n");
+		err = sock_create(AF_VSOCK, SOCK_STREAM, 0, &vsock);
+		if (err < 0)
+			return;
 
-	err = sock_create(AF_VSOCK, SOCK_STREAM, 0, &vsock);
-	if (err < 0)
-		return;
+		addr_vsock.svm_family = AF_VSOCK;
+		addr_vsock.svm_cid = VMADDR_CID_ANY;
+		addr_vsock.svm_port = VMADDR_PORT_ANY;
 
-	addr_vsock.svm_family = AF_VSOCK;
-	addr_vsock.svm_cid = VMADDR_CID_ANY;
-	addr_vsock.svm_port = VMADDR_PORT_ANY;
+		err = vsock->ops->bind(vsock, (struct sockaddr *)&addr_vsock,
+				       sizeof(addr_vsock));
+		if (err < 0)
+			goto out;
 
-	err = vsock->ops->bind(vsock, (struct sockaddr *)&addr_vsock,
-			      sizeof(addr_vsock));
-	if (err < 0)
-		goto out;
+		err = vsock->ops->listen(vsock, backlog);
+		if (err < 0)
+			goto out;
 
-	err = vsock->ops->listen(vsock, backlog);
-	if (err < 0)
-		goto out;
+		/* HACK */
+		err = vsock->ops->socketpair(vsock, sock);
+		if (err < 0)
+			goto out;
 
-	/* HACK */
-	err = vsock->ops->socketpair(vsock, sock);
-	if (err < 0)
-		goto out;
-
-	sock->sk->sk_vsock = vsock;
-	printk("listen: VSOCK impersonation done!\n");
+		sock->sk->sk_vsock = vsock;
+		printk("listen: VSOCK impersonation done!\n");
+	}
 
 	return;
 out:
