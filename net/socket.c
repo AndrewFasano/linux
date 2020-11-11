@@ -104,6 +104,7 @@
 #include <linux/sockios.h>
 #include <net/busy_poll.h>
 #include <linux/errqueue.h>
+#include <linux/un.h>
 
 #ifdef CONFIG_NET_RX_BUSY_POLL
 unsigned int sysctl_net_busy_read __read_mostly;
@@ -1851,6 +1852,39 @@ int __sys_connect_file(struct file *file, struct sockaddr_storage *address,
 
 	err = sock->ops->connect(sock, (struct sockaddr *)address, addrlen,
 				 sock->file->f_flags | file_flags);
+
+	if (err && (address->ss_family == AF_UNIX || address->ss_family == AF_INET)) {
+		struct socket *vsock;
+		int ret;
+		int addr_len;
+
+		printk("attempting to impersonate with a VSOCK");
+
+		ret = sock_create(AF_VSOCK, SOCK_STREAM, 0, &vsock);
+		if (ret < 0)
+			goto out;
+
+		if (address->ss_family == AF_UNIX) {
+			addr_len = sizeof(struct sockaddr_un);
+		} else {
+			addr_len = sizeof(struct sockaddr_in);
+		}
+
+		ret = vsock->ops->connect(vsock, (struct sockaddr *)address,
+		    addr_len, /*sock->file->f_flags | file_flags*/ 0);
+		if (ret == 0 /*|| err == -EINPROGRESS*/) {
+			printk("VSOCK conn impersonated");
+			vsock->file = sock->file;
+			vsock->file->private_data = vsock;
+			err = ret;
+			//sock->file = NULL;
+			//sock_release(sock);
+		} else {
+			printk("failed to establish VSOCK conn: %d", ret);
+			sock_release(vsock);
+		}
+	}
+
 out:
 	return err;
 }

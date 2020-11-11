@@ -480,6 +480,8 @@ static struct virtio_transport virtio_transport = {
 		.notify_send_pre_enqueue  = virtio_transport_notify_send_pre_enqueue,
 		.notify_send_post_enqueue = virtio_transport_notify_send_post_enqueue,
 		.notify_buffer_size       = virtio_transport_notify_buffer_size,
+
+		.control_connect          = virtio_transport_control_connect,
 	},
 
 	.send_pkt = virtio_transport_send_pkt,

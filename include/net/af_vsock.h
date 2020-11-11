@@ -30,6 +30,10 @@ struct vsock_sock {
 	const struct vsock_transport *transport;
 	struct sockaddr_vm local_addr;
 	struct sockaddr_vm remote_addr;
+	/* Wrapped addresses, used for impersonation. */
+	struct sockaddr_storage wr_local_addr;
+	struct sockaddr_storage wr_remote_addr;
+	sa_family_t wr_sa_family;
 	/* Links for the global tables of bound and connected sockets. */
 	struct list_head bound_table;
 	struct list_head connected_table;
@@ -162,6 +166,10 @@ struct vsock_transport {
 
 	/* Addressing. */
 	u32 (*get_local_cid)(void);
+
+	/* Control functions. */
+	int (*control_connect)(struct vsock_sock *,
+			       struct sockaddr *, size_t);
 };
 
 /**** CORE ****/

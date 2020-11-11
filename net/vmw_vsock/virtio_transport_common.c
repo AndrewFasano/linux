@@ -92,6 +92,50 @@ out_pkt:
 	return NULL;
 }
 
+static struct virtio_vsock_pkt *
+virtio_transport_alloc_pkt_control(struct virtio_vsock_pkt_control *control,
+				   size_t len,
+				   u32 src_cid,
+				   u32 src_port,
+				   u32 dst_cid,
+				   u32 dst_port)
+{
+	struct virtio_vsock_pkt *pkt;
+
+	pkt = kzalloc(sizeof(*pkt), GFP_KERNEL);
+	if (!pkt)
+		return NULL;
+
+	pkt->hdr.type		= cpu_to_le16(control->type);
+	pkt->hdr.op		= cpu_to_le16(control->op);
+	pkt->hdr.src_cid	= cpu_to_le64(src_cid);
+	pkt->hdr.dst_cid	= cpu_to_le64(dst_cid);
+	pkt->hdr.src_port	= cpu_to_le32(src_port);
+	pkt->hdr.dst_port	= cpu_to_le32(dst_port);
+	pkt->hdr.flags		= cpu_to_le32(control->flags);
+	pkt->len		= len;
+	pkt->hdr.len		= cpu_to_le32(len);
+	pkt->reply		= control->reply;
+	pkt->vsk		= control->vsk;
+
+	/* XXX - if address is aligned, we could probably use an indirect descriptor
+	   here to avoid the bounce buffer */
+	if (control->address && len > 0) {
+		pkt->buf = kmalloc(len, GFP_KERNEL);
+		if (!pkt->buf)
+			goto out_pkt;
+
+		pkt->buf_len = len;
+
+		memcpy(pkt->buf, control->address, len);
+	}
+	return pkt;
+
+out_pkt:
+	kfree(pkt);
+	return NULL;
+}
+
 /* Packet capture */
 static struct sk_buff *virtio_transport_build_skb(void *opaque)
 {
@@ -209,6 +253,52 @@ static int virtio_transport_send_pkt_info(struct vsock_sock *vsk,
 	pkt = virtio_transport_alloc_pkt(info, pkt_len,
 					 src_cid, src_port,
 					 dst_cid, dst_port);
+	if (!pkt) {
+		virtio_transport_put_credit(vvs, pkt_len);
+		return -ENOMEM;
+	}
+
+	virtio_transport_inc_tx_pkt(vvs, pkt);
+
+	return t_ops->send_pkt(pkt);
+}
+
+static int virtio_transport_send_pkt_control(struct vsock_sock *vsk,
+					     struct virtio_vsock_pkt_control *control)
+{
+	u32 src_cid, src_port, dst_cid, dst_port;
+	const struct virtio_transport *t_ops;
+	struct virtio_vsock_sock *vvs;
+	struct virtio_vsock_pkt *pkt;
+	u32 pkt_len = control->pkt_len;
+
+	t_ops = virtio_transport_get_ops(vsk);
+	if (unlikely(!t_ops))
+		return -EFAULT;
+
+	src_cid = t_ops->transport.get_local_cid();
+	src_port = vsk->local_addr.svm_port;
+	if (!control->remote_cid) {
+		dst_cid	= vsk->remote_addr.svm_cid;
+		dst_port = vsk->remote_addr.svm_port;
+	} else {
+		dst_cid = control->remote_cid;
+		dst_port = control->remote_port;
+	}
+
+	vvs = vsk->trans;
+
+	/* we can send less than pkt_len bytes */
+	if (pkt_len > VIRTIO_VSOCK_MAX_PKT_BUF_SIZE)
+		pkt_len = VIRTIO_VSOCK_MAX_PKT_BUF_SIZE;
+
+	/* virtio_transport_get_credit might return less than pkt_len credit */
+	/* XXX - Control messages should ignore credit */
+	/* pkt_len = virtio_transport_get_credit(vvs, pkt_len); */
+
+	pkt = virtio_transport_alloc_pkt_control(control, pkt_len,
+						 src_cid, src_port,
+						 dst_cid, dst_port);
 	if (!pkt) {
 		virtio_transport_put_credit(vvs, pkt_len);
 		return -ENOMEM;
@@ -631,6 +721,22 @@ int virtio_transport_connect(struct vsock_sock *vsk)
 	return virtio_transport_send_pkt_info(vsk, &info);
 }
 EXPORT_SYMBOL_GPL(virtio_transport_connect);
+
+int virtio_transport_control_connect(struct vsock_sock *vsk,
+                   struct sockaddr *address,
+                   size_t len)
+{
+	struct virtio_vsock_pkt_control control = {
+		.op = VIRTIO_VSOCK_OP_REQUEST_EX,
+		.type = VIRTIO_VSOCK_TYPE_STREAM,
+		.address = address,
+		.pkt_len = len,
+		.vsk = vsk,
+	};
+
+	return virtio_transport_send_pkt_control(vsk, &control);
+}
+EXPORT_SYMBOL_GPL(virtio_transport_control_connect);
 
 int virtio_transport_shutdown(struct vsock_sock *vsk, int mode)
 {

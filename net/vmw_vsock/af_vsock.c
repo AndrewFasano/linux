@@ -107,6 +107,8 @@
 #include <linux/unistd.h>
 #include <linux/wait.h>
 #include <linux/workqueue.h>
+#include <linux/un.h>
+#include <linux/in.h>
 #include <net/sock.h>
 #include <net/af_vsock.h>
 
@@ -860,6 +862,37 @@ vsock_bind(struct socket *sock, struct sockaddr *addr, int addr_len)
 	return err;
 }
 
+static int vsock_getname_wrapped(struct socket *sock, struct vsock_sock *vsk,
+			 struct sockaddr *addr, int peer)
+{
+	int addr_len;
+	struct sockaddr_storage *wr_addr;
+
+	if (peer) {
+		if (sock->state != SS_CONNECTED) {
+			return -ENOTCONN;
+		}
+		wr_addr = &vsk->wr_remote_addr;
+	} else {
+		wr_addr = &vsk->wr_local_addr;
+	}
+
+	if (!wr_addr) {
+		return -EINVAL;
+	}
+
+	if (vsk->wr_sa_family == AF_UNIX) {
+		addr_len = sizeof(struct sockaddr_un);
+	} else {
+		addr_len = sizeof(struct sockaddr_in);
+	}
+
+	memcpy(addr, wr_addr, addr_len);
+
+	return addr_len;
+}
+
+
 static int vsock_getname(struct socket *sock,
 			 struct sockaddr *addr, int peer)
 {
@@ -873,6 +906,11 @@ static int vsock_getname(struct socket *sock,
 	err = 0;
 
 	lock_sock(sk);
+
+	if (vsk->wr_sa_family) {
+		err = vsock_getname_wrapped(sock, vsk, addr, peer);
+		goto out;
+	}
 
 	if (peer) {
 		if (sock->state != SS_CONNECTED) {
@@ -1249,7 +1287,7 @@ static int vsock_stream_connect(struct socket *sock, struct sockaddr *addr,
 	struct sock *sk;
 	struct vsock_sock *vsk;
 	const struct vsock_transport *transport;
-	struct sockaddr_vm *remote_addr;
+	struct sockaddr_vm *remote_addr = NULL;
 	long timeout;
 	DEFINE_WAIT(wait);
 
@@ -1277,15 +1315,48 @@ static int vsock_stream_connect(struct socket *sock, struct sockaddr *addr,
 		err = -EALREADY;
 		break;
 	default:
-		if ((sk->sk_state == TCP_LISTEN) ||
-		    vsock_addr_cast(addr, addr_len, &remote_addr) != 0) {
+		if (sk->sk_state == TCP_LISTEN) {
 			err = -EINVAL;
 			goto out;
 		}
 
-		/* Set the remote address that we are connecting to. */
-		memcpy(&vsk->remote_addr, remote_addr,
-		       sizeof(vsk->remote_addr));
+		if (addr->sa_family == AF_UNIX || addr->sa_family == AF_INET) {
+			/* Fabricate a fake remote_addr */
+			vsk->remote_addr.svm_family = AF_VSOCK;
+			vsk->remote_addr.svm_cid = 2;
+			vsk->remote_addr.svm_port = 1234;
+			vsk->wr_sa_family = addr->sa_family;
+			if (vsk->wr_sa_family == AF_UNIX) {
+				if (addr_len != sizeof(struct sockaddr_un)) {
+					printk("XXX - invalid unix addr len");
+					err = -EINVAL;
+					goto out;
+				}
+				memcpy(&vsk->wr_remote_addr, addr, addr_len);
+			} else {
+				struct sockaddr_in *local_addr;
+				if (addr_len != sizeof(struct sockaddr_in)) {
+					printk("XXX - invalid inet addr len");
+					err = -EINVAL;
+					goto out;
+				}
+				memcpy(&vsk->wr_remote_addr, addr, addr_len);
+
+				local_addr = (struct sockaddr_in *) &vsk->wr_local_addr;
+				local_addr->sin_family = AF_INET;
+				local_addr->sin_port = htons(1234);
+				local_addr->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+			}
+		} else {
+			if (vsock_addr_cast(addr, addr_len, &remote_addr) != 0) {
+				err = -EINVAL;
+				goto out;
+			}
+
+			/* Set the remote address that we are connecting to. */
+			memcpy(&vsk->remote_addr, remote_addr,
+			    sizeof(vsk->remote_addr));
+		}
 
 		err = vsock_assign_transport(vsk, NULL);
 		if (err)
@@ -1297,8 +1368,9 @@ static int vsock_stream_connect(struct socket *sock, struct sockaddr *addr,
 		 * endpoints.
 		 */
 		if (!transport ||
-		    !transport->stream_allow(remote_addr->svm_cid,
-					     remote_addr->svm_port)) {
+		    (remote_addr &&
+			!transport->stream_allow(remote_addr->svm_cid,
+			    remote_addr->svm_port))) {
 			err = -ENETUNREACH;
 			goto out;
 		}
@@ -1309,7 +1381,11 @@ static int vsock_stream_connect(struct socket *sock, struct sockaddr *addr,
 
 		sk->sk_state = TCP_SYN_SENT;
 
-		err = transport->connect(vsk);
+		if (addr->sa_family == AF_VSOCK) {
+			err = transport->connect(vsk);
+		} else {
+			err = transport->control_connect(vsk, addr, addr_len);
+		}
 		if (err < 0)
 			goto out;
 

@@ -62,6 +62,17 @@ struct virtio_vsock_pkt_info {
 	bool reply;
 };
 
+struct virtio_vsock_pkt_control {
+	u32 remote_cid, remote_port;
+	struct vsock_sock *vsk;
+	struct sockaddr *address;
+	u32 pkt_len;
+	u16 type;
+	u16 op;
+	u32 flags;
+	bool reply;
+};
+
 struct virtio_transport {
 	/* This must be the first field */
 	struct vsock_transport transport;
@@ -145,5 +156,9 @@ void virtio_transport_inc_tx_pkt(struct virtio_vsock_sock *vvs, struct virtio_vs
 u32 virtio_transport_get_credit(struct virtio_vsock_sock *vvs, u32 wanted);
 void virtio_transport_put_credit(struct virtio_vsock_sock *vvs, u32 credit);
 void virtio_transport_deliver_tap_pkt(struct virtio_vsock_pkt *pkt);
+
+int virtio_transport_control_connect(struct vsock_sock *vsk,
+				     struct sockaddr *address,
+				     size_t len);
 
 #endif /* _LINUX_VIRTIO_VSOCK_H */
