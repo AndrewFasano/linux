@@ -171,6 +171,7 @@ static struct sk_buff *virtio_transport_build_skb(void *opaque)
 
 	switch (le16_to_cpu(pkt->hdr.op)) {
 	case VIRTIO_VSOCK_OP_REQUEST:
+	case VIRTIO_VSOCK_OP_REQUEST_EX:
 	case VIRTIO_VSOCK_OP_RESPONSE:
 		hdr->op = cpu_to_le16(AF_VSOCK_OP_CONNECT);
 		break;
@@ -1163,7 +1164,8 @@ virtio_transport_recv_listen(struct sock *sk, struct virtio_vsock_pkt *pkt,
 	struct sock *child;
 	int ret;
 
-	if (le16_to_cpu(pkt->hdr.op) != VIRTIO_VSOCK_OP_REQUEST) {
+	if (le16_to_cpu(pkt->hdr.op) != VIRTIO_VSOCK_OP_REQUEST &&
+	    le16_to_cpu(pkt->hdr.op) != VIRTIO_VSOCK_OP_REQUEST_EX) {
 		virtio_transport_reset_no_sock(t, pkt);
 		return -EINVAL;
 	}
@@ -1200,6 +1202,18 @@ virtio_transport_recv_listen(struct sock *sk, struct virtio_vsock_pkt *pkt,
 		virtio_transport_reset_no_sock(t, pkt);
 		sock_put(child);
 		return ret;
+	}
+
+	if (le16_to_cpu(pkt->hdr.op) == VIRTIO_VSOCK_OP_REQUEST_EX) {
+		size_t len = pkt->len;
+
+		if (len > sizeof(vchild->wr_remote_addr))
+			len = sizeof(vchild->wr_remote_addr);
+
+		memcpy(&vchild->wr_remote_addr, pkt->buf, pkt->len);
+		memcpy(&vchild->wr_local_addr, &vsk->wr_local_addr,
+		       sizeof(vchild->wr_remote_addr));
+		vchild->wr_sa_family = vchild->wr_remote_addr.ss_family;
 	}
 
 	if (virtio_transport_space_update(child, pkt))

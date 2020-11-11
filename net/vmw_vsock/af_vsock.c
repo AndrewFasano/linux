@@ -589,7 +589,6 @@ out:
 
 static int vsock_wrap_listen(struct socket *vsock, struct socket *sock)
 {
-	struct sockaddr_in * local_addr;
 	struct sockaddr_storage addr;
 	struct vsock_sock *vsk;
 	struct sock *sk;
@@ -615,12 +614,7 @@ static int vsock_wrap_listen(struct socket *vsock, struct socket *sock)
 	}
 
 	vsk->wr_sa_family = addr.ss_family;
-	memcpy(&vsk->wr_remote_addr, &addr, addr_len);
-
-	local_addr = (struct sockaddr_in *) &vsk->wr_local_addr;
-	local_addr->sin_family = AF_INET;
-	local_addr->sin_port = htons(1234);
-	local_addr->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	memcpy(&vsk->wr_local_addr, &addr, addr_len);
 
 	err = transport_g2h->control_listen(vsk, (struct sockaddr *) &addr, addr_len);
 	if (err < 0)
