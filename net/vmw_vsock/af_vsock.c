@@ -1658,7 +1658,10 @@ static int vsock_stream_setsockopt(struct socket *sock,
 	const struct vsock_transport *transport;
 	u64 val;
 
-	if (level != AF_VSOCK)
+	if (level == SOL_TCP) {
+		/* libkrun: lie about having set the option. */
+		return 0;
+	} else if (level != AF_VSOCK)
 		return -ENOPROTOOPT;
 
 #define COPY_IN(_v)                                       \
