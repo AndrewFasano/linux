@@ -1282,7 +1282,9 @@ void virtio_transport_recv_pkt(struct virtio_transport *t,
 	lock_sock(sk);
 
 	/* Check if sk has been released before lock_sock */
-	if (sk->sk_shutdown == SHUTDOWN_MASK) {
+	if (sk->sk_shutdown == SHUTDOWN_MASK &&
+	    (sk->sk_state != TCP_ESTABLISHED ||
+	     le16_to_cpu(pkt->hdr.op) != VIRTIO_VSOCK_OP_RST)) {
 		(void)virtio_transport_reset_no_sock(t, pkt);
 		release_sock(sk);
 		sock_put(sk);
