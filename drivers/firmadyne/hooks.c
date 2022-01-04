@@ -17,6 +17,8 @@
 #include "hooks.h"
 #include "hooks-private.h"
 
+#if 0
+
 /* Network related operations; e.g. bind, accept, etc */
 #define LEVEL_NETWORK (1 << 0)
 /* System operations; e.g. reboot, mount, ioctl, execve, etc */
@@ -363,3 +365,5 @@ void unregister_probes(void) {
 #undef HOOK
 #undef HOOK_RET
 }
+
+#endif

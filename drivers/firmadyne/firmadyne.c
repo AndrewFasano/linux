@@ -32,7 +32,7 @@ module_param(syscall, short, 0660);
 MODULE_PARM_DESC(syscall, "Loglevel bitmask for interception and printing of system calls");
 
 static int reboot_notify(struct notifier_block *nb, unsigned long code, void *unused) {
-	unregister_probes();
+	//unregister_probes();
 
 	return NOTIFY_DONE;
 }
@@ -52,10 +52,12 @@ int __init init_module(void) {
 	}
 
 
+#if 0
 	if ((tmp = register_probes()) < 0) {
 		printk(KERN_WARNING MODULE_NAME": register_probes() = %d\n", tmp);
 		ret = tmp;
 	}
+#endif
 
 	if ((tmp = register_procfs_stubs()) < 0) {
 		printk(KERN_WARNING MODULE_NAME": register_procfs_stubs() = %d\n", tmp);
@@ -69,7 +71,7 @@ int __init init_module(void) {
 
 void __exit cleanup_module(void) {
 	unregister_devfs_stubs();
-	unregister_probes();
+	//unregister_probes();
 	unregister_procfs_stubs();
 
 	unregister_reboot_notifier(&reboot_cb);

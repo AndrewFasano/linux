@@ -3,6 +3,7 @@ set -eux
 
 # valid: arm, mipsel, mipseb
 ARCH=$1
+VERS=4.20
 
 SHORT_ARCH=mips
 ABI=
@@ -34,10 +35,10 @@ echo 'Updating PANDA info'
 ${PANDA}/panda/plugins/osi_linux/utils/kernelinfo_gdb/run.sh ./build/${ARCH}/vmlinux ./panda_profile.${ARCH}
 
 if [ -e build/${ARCH}/arch/${SHORT_ARCH}/boot/zImage ]; then
-  cp build/${ARCH}/arch/${SHORT_ARCH}/boot/zImage  ${OUTDIR}/zImage4.${ARCH}
+  cp build/${ARCH}/arch/${SHORT_ARCH}/boot/zImage  ${OUTDIR}/zImage$VERS.${ARCH}
 fi
 
-cp build/${ARCH}/vmlinux ${OUTDIR}/vmlinux4.${ARCH}
+cp build/${ARCH}/vmlinux ${OUTDIR}/vmlinux$VERS.${ARCH}
 
-echo "[${ARCH}]" > ${OUTDIR}/${ARCH}_profile4.conf 
-cat panda_profile.${ARCH} >> ${OUTDIR}/${ARCH}_profile4.conf 
+echo "[${ARCH}]" > ${OUTDIR}/${ARCH}_profile$VERS.conf 
+cat panda_profile.${ARCH} >> ${OUTDIR}/${ARCH}_profile$VERS.conf 
