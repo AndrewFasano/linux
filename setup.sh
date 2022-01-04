@@ -8,11 +8,11 @@ SHORT_ARCH=mips
 ABI=
 TARGETS=vmlinux
 
-# if ARCH==arm
-#TARGETS=vmlinux ZImage # only for arm
-#ABI=eabi # only for arm
-#SHORT_ARCH=$ARCH
-#fi
+if [ "$ARCH" = "arm" ]; then
+TARGETS="vmlinux zImage" # only for arm
+ABI=eabi # only for arm
+SHORT_ARCH=$ARCH
+fi
 
 CROSS_CC=/opt/cross/${ARCH}-linux-musl${ABI}/bin/${ARCH}-linux-musl${ABI}-
 
@@ -34,10 +34,10 @@ echo 'Updating PANDA info'
 ${PANDA}/panda/plugins/osi_linux/utils/kernelinfo_gdb/run.sh ./build/${ARCH}/vmlinux ./panda_profile.${ARCH}
 
 if [ -e build/${ARCH}/arch/${SHORT_ARCH}/boot/zImage ]; then
-  cp build/${ARCH}/arch/${SHORT_ARCH}/boot/zImage  ${OUTDIR}/zImage.${ARCH}
+  cp build/${ARCH}/arch/${SHORT_ARCH}/boot/zImage  ${OUTDIR}/zImage4.${ARCH}
 fi
 
-cp build/${ARCH}/vmlinux ${OUTDIR}/vmlinux.${ARCH}
+cp build/${ARCH}/vmlinux ${OUTDIR}/vmlinux4.${ARCH}
 
-echo "[${ARCH}]" > ${OUTDIR}/${ARCH}_profile.conf 
-cat panda_profile.${ARCH} >> ${OUTDIR}/${ARCH}_profile.conf 
+echo "[${ARCH}]" > ${OUTDIR}/${ARCH}_profile4.conf 
+cat panda_profile.${ARCH} >> ${OUTDIR}/${ARCH}_profile4.conf 
