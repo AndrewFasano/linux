@@ -3,7 +3,7 @@ set -eux
 
 # valid: arm, mipsel, mipseb
 ARCH=$1
-VERS=4.20
+VERS=4.10
 
 SHORT_ARCH=mips
 ABI=
