@@ -136,3 +136,8 @@ all.config
 
 # panda specific:
 build/
+*_profile.conf
+panda_profile.*
+vmlinux.*
+zImage.*
+kernels/

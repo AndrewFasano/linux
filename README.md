@@ -6,5 +6,6 @@ This is a stock Linux 5.15.11 kernel with a helper script to build armel/mipsel/
 
 Custom files:
 * `setup.sh`: takes an argument of arch to build
+* `setup_all_tar.sh`: build arm, mips, mipsel, package into a `.tar.gz` along with OSI profiles and config files.
 * `update_config.sh`: helper to run make olddefconfig, savedefconfig and update config.[arch]. Useful when switching kernel versions.
 * `config.{armel,mipsel,mipseb}`: lightly customized config files
