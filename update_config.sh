@@ -1,4 +1,3 @@
-
 #!/bin/sh
 set -eux
 
@@ -10,7 +9,6 @@ ABI=
 TARGETS=vmlinux
 
 if [ "$ARCH" = "arm" ]; then
-  echo "ARMY"
   TARGETS="vmlinux zImage" # only for arm
   ABI=eabi # only for arm
   SHORT_ARCH=$ARCH
