@@ -699,8 +699,10 @@ static int __vsock_bind(struct sock *sk, struct sockaddr_vm *addr)
 	int retval;
 
 	/* First ensure this socket isn't already bound. */
-	if (vsock_addr_bound(&vsk->local_addr))
+	if (vsock_addr_bound(&vsk->local_addr)) {
+    pr_warn("VSOCK local_addr is already bound with port: %d\n", ((const struct sockaddr_vm*)(&vsk->local_addr))->svm_port);
 		return -EINVAL;
+  }
 
 	/* Now bind to the provided address or select appropriate values if
 	 * none are provided (VMADDR_CID_ANY and VMADDR_PORT_ANY).  Note that

@@ -38,15 +38,17 @@ static int tsi_create_control_socket(struct socket **csocket)
 
 	memset(&vm_addr, 0, sizeof(struct sockaddr_vm));
 	vm_addr.svm_family = AF_VSOCK;
-	vm_addr.svm_port = VMADDR_PORT_ANY;
+	vm_addr.svm_port = VMADDR_PORT_ANY; // It checks if port != any
 	vm_addr.svm_cid = VMADDR_CID_ANY;
 
+  // Somehow the control socket is already assigned to a local port. This might actually make sense, since we have that earlier bind?
 	err = kernel_bind(*csocket, (struct sockaddr *)&vm_addr,
 			  sizeof(struct sockaddr_vm));
 	if (err) {
-		pr_debug("%s: error binding port\n", __func__);
+		pr_debug("%s: error binding control socket port\n", __func__);
 		goto release;
 	}
+  pr_debug("%s: successfully bound control socket port\n", __func__);
 
 	return 0;
 
@@ -99,7 +101,7 @@ static int tsi_release(struct socket *sock)
 	struct sock *sk;
 	int err;
 
-	pr_debug("%s: socket=%p\n", __func__, sock);
+	pr_debug("%s: socket=%px\n", __func__, sock);
 	if (!sock) {
 		pr_debug("%s: no sock\n", __func__);
 	}
@@ -116,7 +118,7 @@ static int tsi_release(struct socket *sock)
 	vsocket = tsk->vsocket;
 	sk = sock->sk;
 
-	pr_debug("%s: tsk=%p vsocket=%p isocket=%p\n", __func__, tsk, vsocket,
+	pr_debug("%s: tsk=%px vsocket=%px isocket=%px\n", __func__, tsk, vsocket,
 		 isocket);
 
 	if (!vsocket) {
@@ -124,13 +126,19 @@ static int tsi_release(struct socket *sock)
 	} else {
 		struct tsi_proxy_release tpr;
 
-		tpr.svm_port = tsk->svm_port;
-		tpr.svm_peer_port = tsk->svm_peer_port;
+    if (tsk->csocket->state == SS_UNCONNECTED) {
+      // If control socket isn't connected due to a failure during creation, userspace could release it
+      // but we can't try to send a message since it's disconnected.
+      pr_debug("%s: unconnected control socket\n", __func__);
+    } else {
+      tpr.svm_port = tsk->svm_port;
+      tpr.svm_peer_port = tsk->svm_peer_port;
 
-		err = tsi_control_sendmsg(tsk->csocket,
-					  TSI_PROXY_RELEASE,
-					  (void *)&tpr,
-					  sizeof(struct tsi_proxy_release));
+      err = tsi_control_sendmsg(tsk->csocket,
+              TSI_PROXY_RELEASE,
+              (void *)&tpr,
+              sizeof(struct tsi_proxy_release));
+    }
 
 		err = vsocket->ops->release(vsocket);
 		if (err != 0) {
@@ -174,7 +182,7 @@ static int tsi_bind(struct socket *sock, struct sockaddr *addr, int addr_len)
 	isocket = tsk->isocket;
 	vsocket = tsk->vsocket;
 
-	pr_debug("%s: vsocket=%p\n", __func__, vsocket);
+	pr_debug("%s: vsocket=%px\n", __func__, vsocket);
 
 	if (!isocket) {
 		pr_debug("%s: no isocket\n", __func__);
@@ -182,11 +190,21 @@ static int tsi_bind(struct socket *sock, struct sockaddr *addr, int addr_len)
 		goto release;
 	}
 
+  // isock is AF_INET. What's port/addr?
+  pr_err("%s: bind isock (ipv4) has sin family %d port %d, addr %x\n",
+  __func__,
+  ((struct sockaddr_in*)addr)->sin_family,
+  ntohs(((struct sockaddr_in*)addr)->sin_port),
+  ((struct sockaddr_in*)addr)->sin_addr.s_addr
+  );
+  // Binding the isocket will fail with -EADDRNOTAVAIL if the address doesn't exist (duh) - ip addr add 127.1 dev lo, but then try listening on 0.0.0.0 to get farther/
+
 	err = isocket->ops->bind(isocket, addr, addr_len);
 	if (err != 0) {
 		pr_debug("%s: error binding isocket: %d\n", __func__, err);
 		goto release;
 	}
+
 
 	if (!vsocket) {
 		pr_debug("%s: no vsocket\n", __func__);
@@ -204,12 +222,14 @@ static int tsi_bind(struct socket *sock, struct sockaddr *addr, int addr_len)
 	if (err) {
 		pr_debug("%s: error setting up vsock listener: %d\n", __func__,
 			 err);
-	} else if (addr_len == sizeof(struct sockaddr_in)) {
+	} else if (addr_len >= sizeof(struct sockaddr_in)) {
 		if (!tsk->bound_addr) {
 			tsk->bound_addr =
 			    kmalloc(sizeof(struct sockaddr_in), GFP_KERNEL);
 		}
+    pr_debug("%s Successfully set up vsock listener, listening on local port %d", __func__, addr_vsock.svm_port);
 		memcpy(tsk->bound_addr, addr, sizeof(struct sockaddr_in));
+    tsk->svm_port = addr_vsock.svm_port;
 	}
 
 release:
@@ -232,7 +252,9 @@ static int tsi_create_proxy(struct tsi_sock *tsk, int type)
 	err = kernel_bind(vsocket, (struct sockaddr *)&vm_addr,
 			  sizeof(struct sockaddr_vm));
 	if (err) {
-		pr_debug("%s: error binding port: %d\n", __func__, err);
+		pr_debug("%s: error binding port: %d\n", __func__, err); // XXX this fails!
+    //return err;
+    // If err was -22, that's probably because we already bound our socket - let's just keep going!
 	}
 
 	err = vsocket->ops->getname(vsocket, (struct sockaddr *)&vm_addr, 0);
@@ -244,7 +266,7 @@ static int tsi_create_proxy(struct tsi_sock *tsk, int type)
 	tpc.svm_port = tsk->svm_port = vm_addr.svm_port;
 	tpc.type = type;
 
-	pr_debug("%s: type=%d\n", __func__, tpc.type);
+	pr_debug("%s: type=%d tpc %px\n", __func__, tpc.type, &tpc);
 
 	err = tsi_control_sendmsg(tsk->csocket,
 				  TSI_PROXY_CREATE,
@@ -278,7 +300,7 @@ static int tsi_connect(struct socket *sock, struct sockaddr *addr,
 	isocket = tsk->isocket;
 	vsocket = tsk->vsocket;
 
-	pr_debug("%s: vsocket=%p isocket=%p\n", __func__, vsocket, isocket);
+	pr_debug("%s: vsocket=%px isocket=%px\n", __func__, vsocket, isocket);
 
 	if (isocket) {
 		/* We can't honor O_NONBLOCK semantics here as we need to know
@@ -482,7 +504,7 @@ static int tsi_accept(struct socket *sock, struct socket *newsock, int flags,
 	tsk = tsi_sk(sock->sk);
 	isocket = tsk->isocket;
 
-	pr_debug("%s: socket=%p newsock=%p st=%d\n", __func__, sock, newsock,
+	pr_debug("%s: socket=%px newsock=%px st=%d\n", __func__, sock, newsock,
 		 tsk->status);
 
 	sk = sk_alloc(current->nsproxy->net_ns, AF_TSI, GFP_KERNEL,
@@ -600,7 +622,7 @@ static int tsi_getname(struct socket *sock, struct sockaddr *addr, int peer)
 	tsk = tsi_sk(sock->sk);
 	isocket = tsk->isocket;
 
-	pr_debug("%s: s=%p is=%p st=%d svm_port=%u peer=%d\n", __func__, sock,
+	pr_debug("%s: s=%px is=%px st=%d svm_port=%u peer=%d\n", __func__, sock,
 		 isocket, tsk->status, tsk->svm_port, peer);
 
 	switch (tsk->status) {
@@ -641,7 +663,7 @@ static __poll_t tsi_poll(struct file *file, struct socket *sock,
 	isocket = tsk->isocket;
 	vsocket = tsk->vsocket;
 
-	pr_debug("%s: s=%p vs=%p is=%p st=%d\n", __func__, sock,
+	pr_debug("%s: s=%px vs=%px is=%px st=%d\n", __func__, sock,
 		 vsocket, isocket, tsk->status);
 
 	switch (tsk->status) {
@@ -710,7 +732,7 @@ static int tsi_listen(struct socket *sock, int backlog)
 	isocket = tsk->isocket;
 	vsocket = tsk->vsocket;
 
-	pr_debug("%s: vsocket=%p\n", __func__, vsocket);
+	pr_debug("%s: vsocket=%px\n", __func__, vsocket);
 
 	err = vsocket->ops->listen(vsocket, backlog);
 	if (err != 0) {
@@ -732,6 +754,7 @@ static int tsi_listen(struct socket *sock, int backlog)
 	sin = tsk->bound_addr;
 
 	if (!tsk->svm_port) {
+    pr_debug("%s: create proxy because svm_port unset\n", __func__);
 		if (tsi_create_proxy(tsk, SOCK_STREAM) != 0) {
 			err = -EINVAL;
 			goto release;
@@ -801,7 +824,7 @@ static int tsi_shutdown(struct socket *sock, int mode)
 	isocket = tsk->isocket;
 	vsocket = tsk->vsocket;
 
-	pr_debug("%s: s=%p vs=%p is=%p st=%d\n", __func__, sock,
+	pr_debug("%s: s=%px vs=%px is=%px st=%d\n", __func__, sock,
 		 vsocket, isocket, tsk->status);
 
 	switch (tsk->status) {
@@ -834,7 +857,7 @@ static int tsi_stream_setsockopt(struct socket *sock,
 	tsk = tsi_sk(sock->sk);
 	isocket = tsk->isocket;
 
-	pr_debug("%s: s=%p is=%p st=%d\n", __func__, sock,
+	pr_debug("%s: s=%px is=%px st=%d\n", __func__, sock,
 		 isocket, tsk->status);
 
 	switch (tsk->status) {
@@ -867,7 +890,7 @@ static int tsi_dgram_setsockopt(struct socket *sock,
 	tsk = tsi_sk(sock->sk);
 	isocket = tsk->isocket;
 
-	pr_debug("%s: s=%p is=%p st=%d\n", __func__, sock,
+	pr_debug("%s: s=%px is=%px st=%d\n", __func__, sock,
 		 isocket, tsk->status);
 
 	switch (tsk->status) {
@@ -901,7 +924,7 @@ static int tsi_stream_getsockopt(struct socket *sock,
 	isocket = tsk->isocket;
 	vsocket = tsk->vsocket;
 
-	pr_debug("%s: s=%p vs=%p is=%p st=%d\n", __func__, sock,
+	pr_debug("%s: s=%px vs=%px is=%px st=%d\n", __func__, sock,
 		 vsocket, isocket, tsk->status);
 
 	switch (tsk->status) {
@@ -935,7 +958,7 @@ static int tsi_stream_sendmsg(struct socket *sock, struct msghdr *msg,
 	isocket = tsk->isocket;
 	vsocket = tsk->vsocket;
 
-	pr_debug("%s: s=%p vs=%p is=%p st=%d\n", __func__, sock,
+	pr_debug("%s: s=%px vs=%px is=%px st=%d\n", __func__, sock,
 		 vsocket, isocket, tsk->status);
 
 	switch (tsk->status) {
@@ -947,7 +970,7 @@ static int tsi_stream_sendmsg(struct socket *sock, struct msghdr *msg,
 		break;
 	case S_VSOCK:
 		err = vsocket->ops->sendmsg(vsocket, msg, len);
-		pr_debug("%s: s=%p vs=%p is=%p st=%d exit\n", __func__, sock,
+		pr_debug("%s: s=%px vs=%px is=%px st=%d exit\n", __func__, sock,
 			 vsocket, isocket, tsk->status);
 		break;
 	}
@@ -973,7 +996,7 @@ static int tsi_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 	isocket = tsk->isocket;
 	vsocket = tsk->vsocket;
 
-	pr_debug("%s: s=%p vs=%p is=%p st=%d\n", __func__, sock,
+	pr_debug("%s: s=%px vs=%px is=%px st=%d\n", __func__, sock,
 		 vsocket, isocket, tsk->status);
 
 	switch (tsk->status) {
@@ -1054,7 +1077,7 @@ static int tsi_stream_recvmsg(struct socket *sock, struct msghdr *msg,
 	isocket = tsk->isocket;
 	vsocket = tsk->vsocket;
 
-	pr_debug("%s: s=%p vs=%p is=%p st=%d\n", __func__, sock,
+	pr_debug("%s: s=%px vs=%px is=%px st=%d\n", __func__, sock,
 		 vsocket, isocket, tsk->status);
 
 	switch (tsk->status) {
@@ -1087,7 +1110,7 @@ static int tsi_dgram_recvmsg(struct socket *sock, struct msghdr *msg,
 	isocket = tsk->isocket;
 	vsocket = tsk->vsocket;
 
-	pr_debug("%s: s=%p vs=%p is=%p st=%d\n", __func__, sock,
+	pr_debug("%s: s=%px vs=%px is=%px st=%d\n", __func__, sock,
 		 vsocket, isocket, tsk->status);
 
 	switch (tsk->status) {
@@ -1101,7 +1124,7 @@ static int tsi_dgram_recvmsg(struct socket *sock, struct msghdr *msg,
 		err = vsocket->ops->recvmsg(vsocket, msg, len, flags);
 		if (err > 0 && msg && msg->msg_name && tsk->sendto_addr) {
 			pr_debug
-			    ("%s: msg_name=%p sin_sendto=%p, msg_len=%d sin_len=%ld\n",
+			    ("%s: msg_name=%px sin_sendto=%px, msg_len=%d sin_len=%ld\n",
 			     __func__, msg->msg_name, tsk->sendto_addr,
 			     msg->msg_namelen, sizeof(struct sockaddr_in));
 			memcpy(msg->msg_name, tsk->sendto_addr,
@@ -1166,7 +1189,7 @@ static int tsi_create(struct net *net, struct socket *sock,
 	struct sock *sk;
 	int err;
 
-	pr_debug("%s: socket=%p\n", __func__, sock);
+	pr_debug("%s: socket=%px\n", __func__, sock);
 
 	if (!sock)
 		return -EINVAL;
@@ -1215,8 +1238,8 @@ static int tsi_create(struct net *net, struct socket *sock,
 		goto release_vsocket;
 	}
 
-	pr_debug("isocket: %p\n", isocket);
-	pr_debug("vsocket: %p\n", vsocket);
+	pr_debug("isocket: %px\n", isocket);
+	pr_debug("vsocket: %px\n", vsocket);
 	tsk->isocket = isocket;
 	tsk->vsocket = vsocket;
 	tsk->csocket = csocket;
