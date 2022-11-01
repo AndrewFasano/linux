@@ -807,8 +807,13 @@ static int virtio_vsock_vqs_init(struct virtio_vsock *vsock)
 	};
 	int ret, max_vq;
 
+  // XXX: I think this needs to be TRUE
 	if (virtio_has_feature(vdev, VIRTIO_VSOCK_F_DGRAM))
 		vsock->has_dgram = true;
+  else {
+    printk(KERN_ERR "FATAL Virtio lacks VIRTIO_VSOCK_F_DGRAM SUPPORT\n\n\n");
+    panic("no VSOCK_F_DGRAM SUPPORT");
+  }
 
 	if (vsock->has_dgram)
 		max_vq = VSOCK_VQ_EX_MAX;
