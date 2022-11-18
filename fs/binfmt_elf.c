@@ -857,8 +857,15 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 	/* Do this so that we can load the interpreter, if need be.  We will
 	   change some of these later */
-	retval = setup_arg_pages(bprm, randomize_stack_top(STACK_TOP),
-				 executable_stack);
+    //Begin for igloo: if we moved the stack, we have to move mmap
+    if(igloo_task_size) {
+        retval = setup_arg_pages(bprm, randomize_stack_top(igloo_task_size),
+                     executable_stack);
+    } else {
+        retval = setup_arg_pages(bprm, randomize_stack_top(STACK_TOP),
+                     executable_stack);
+    }
+    //End for igloo
 	if (retval < 0)
 		goto out_free_dentry;
 	

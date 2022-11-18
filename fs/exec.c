@@ -668,7 +668,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	unsigned long stack_size;
 	unsigned long stack_expand;
 	unsigned long rlim_stack;
-
+    
 #ifdef CONFIG_STACK_GROWSUP
 	/* Limit stack size */
 	stack_base = rlimit_max(RLIMIT_STACK);
@@ -1323,6 +1323,10 @@ void setup_new_exec(struct linux_binprm * bprm)
 	 * some architectures like powerpc
 	 */
 	current->mm->task_size = TASK_SIZE;
+    //Begin for igloo: if we moved the stack, we have to move mmap
+    if(igloo_task_size)
+        current->mm->task_size = igloo_task_size;
+    //End for igloo
 
 	/* install the new credentials */
 	if (!uid_eq(bprm->cred->uid, current_euid()) ||
