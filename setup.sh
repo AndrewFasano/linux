@@ -14,7 +14,9 @@ ABI=eabi # only for arm
 SHORT_ARCH=$ARCH
 fi
 
-CROSS_CC=/opt/cross/${ARCH}-linux-musl${ABI}/bin/${ARCH}-linux-musl${ABI}-
+# Firmadyne cross compilers from https://zenodo.org/record/4922202
+# works for kernel 4.10
+CROSS_CC=/opt/cross/fd/${ARCH}-linux-musl${ABI}/bin/${ARCH}-linux-musl${ABI}-
 
 
 PANDA=~/git/panda
