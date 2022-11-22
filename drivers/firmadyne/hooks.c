@@ -27,6 +27,8 @@
 #define LEVEL_FS_R    (1 << 3)
 /* Process execution operations; e.g. mmap, fork, etc */
 #define LEVEL_EXEC    (1 << 4)
+/* IGLOO introspection: filenames and binds */
+#define LEVEL_IGLOO   (1 << 5)
 
 #define SYSCALL_HOOKS \
 	/* Hook network binds */ \
@@ -72,9 +74,39 @@
 	HOOK("do_send_sig_info", signal_hook, signal_probe) \
 \
 	/* Hook memory mapping */ \
-	HOOK("mmap_region", mmap_hook, mmap_probe)
+	HOOK("mmap_region", mmap_hook, mmap_probe) \
+	/* NEW */ \
+	HOOK("sys_faccessat", access_hook, access_probe) \
+	HOOK("vfs_lstat", lstat_hook, lstat_probe) \
+
+#define LOG_FILE(sname, pid, comm, filename) \
+	if (syscall & LEVEL_IGLOO) \
+		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, comm, filename);
+
+#define LOG_BIND(sname, pid, comm, family, port) \
+	if (syscall & LEVEL_IGLOO) \
+		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%d\n", sname, pid, comm, family, port);
+
+#define LOG_ARG(sc, value) \
+	if (syscall & LEVEL_IGLOO) \
+		printk(KERN_INFO "IGLOO: %s ARG %s", sc, value);
+
+#define LOG_ENV(sc, value) \
+	if (syscall & LEVEL_IGLOO) \
+		printk(KERN_INFO "IGLOO: %s ENV: %s", sc, value);
 
 static char *envp_init[] = { "HOME=/", "TERM=linux", "LD_PRELOAD=/firmadyne/libnvram.so", NULL };
+
+static void access_hook(int dfd, const char __user *filename, int mode, int flags) {
+	LOG_FILE("access", task_pid_nr(current), current->comm, filename);
+	jprobe_return();
+}
+
+static void lstat_hook(char* filename, struct kstat *stat) {
+	LOG_FILE("lstat", task_pid_nr(current), current->comm, filename);
+	jprobe_return();
+}
+
 
 static void socket_hook(int family, int type, int protocol) {
 	if (syscall & LEVEL_NETWORK) {
@@ -133,10 +165,7 @@ out:
 }
 
 static void mount_hook(char *dev_name, char *dir_name, char* type_page, unsigned long flags, void *data_page) {
-	if (syscall & LEVEL_SYSTEM) {
-		printk(KERN_INFO MODULE_NAME": do_mount[PID: %d (%s)]: mountpoint:%s, device:%s, type:%s\n", task_pid_nr(current), current->comm, dir_name, dev_name, type_page);
-	}
-
+	LOG_FILE("mount", task_pid_nr(current), current->comm, dir_name);
 	jprobe_return();
 }
 
@@ -152,10 +181,7 @@ static void ioctl_hook(struct file *filp, unsigned int cmd, unsigned long arg) {
 }
 
 static void unlink_hook(struct inode *dir, struct dentry *dentry) {
-	if (syscall & LEVEL_FS_W) {
-		printk(KERN_INFO MODULE_NAME": vfs_unlink[PID: %d (%s)]: file:%s\n", task_pid_nr(current), current->comm, dentry->d_name.name);
-	}
-
+	LOG_FILE("unlink", task_pid_nr(current), current->comm, dentry->d_name.name);
 	jprobe_return();
 }
 
@@ -177,11 +203,8 @@ static void vlan_hook(struct net_device *dev) {
 }
 
 static void bind_hook(struct socket *sock, struct sockaddr *uaddr, int addr_len) {
-	if (syscall & LEVEL_NETWORK) {
-		unsigned int sport = htons(((struct sockaddr_in *)uaddr)->sin_port);
-		printk(KERN_INFO MODULE_NAME": inet_bind[PID: %d (%s)]: proto:%s, port:%d\n", task_pid_nr(current), current->comm, sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"), sport);
-	}
-
+	unsigned int sport = htons(((struct sockaddr_in *)uaddr)->sin_port);
+	LOG_BIND("bind", task_pid_nr(current), current->comm, sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"), sport);
 	jprobe_return();
 }
 
@@ -246,10 +269,7 @@ static int open_ret_hook(struct kretprobe_instance *ri, struct pt_regs *regs) {
 }
 
 static void open_hook(int dfd, const char __user *filename, int flags, umode_t mode) {
-	if (syscall & LEVEL_FS_R) {
-		printk(KERN_INFO MODULE_NAME": do_sys_open[PID: %d (%s)]: file:%s\n", task_pid_nr(current), current->comm, filename);
-	}
-
+	LOG_FILE("open", task_pid_nr(current), current->comm, filename);
 	jprobe_return();
 }
 
@@ -273,15 +293,14 @@ static void execve_hook(const char *filename, const char __user *const __user *a
 		execute += 1;
 	}
 
-	if (syscall & LEVEL_SYSTEM && strcmp("khelper", current->comm)) {
-		printk(KERN_INFO MODULE_NAME": do_execve[PID: %d (%s)]: argv:", task_pid_nr(current), current->comm);
+	if (syscall & LEVEL_IGLOO && strcmp("khelper", current->comm)) {
+		LOG_FILE("execve", task_pid_nr(current), current->comm, "");
 		for (i = 0; i >= 0 && i < count(argv, MAX_ARG_STRINGS); i++) {
-			printk(KERN_CONT " %s", argv[i]);
+			LOG_ARG("execve", argv[i]);
 		}
 
-		printk(KERN_CONT ", envp:");
 		for (i = 0; i >= 0 && i < count(envp, MAX_ARG_STRINGS); i++) {
-			printk(KERN_CONT " %s", envp[i]);
+			LOG_ENV("execve", envp[i]);
 		}
 	}
 
@@ -289,10 +308,7 @@ static void execve_hook(const char *filename, const char __user *const __user *a
 }
 
 static void mknod_hook(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t dev) {
-	if (syscall & LEVEL_FS_W) {
-		printk(KERN_INFO MODULE_NAME": vfs_mknod[PID: %d (%s)]: file:%s major:%d minor:%d\n", task_pid_nr(current), current->comm, dentry->d_name.name, MAJOR(dev), MINOR(dev));
-	}
-
+	LOG_FILE("mknod", task_pid_nr(current), current->comm, dentry->d_name.name);
 	jprobe_return();
 }
 
