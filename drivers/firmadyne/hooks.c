@@ -83,9 +83,13 @@
 	if (syscall & LEVEL_IGLOO) \
 		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, comm, filename);
 
-#define LOG_BIND(sname, pid, comm, family, port) \
+#define LOG_BIND(sname, pid, comm, family, type, port, ip) \
 	if (syscall & LEVEL_IGLOO) \
-		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%d\n", sname, pid, comm, family, port);
+		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI4\n", sname, pid, comm,    type, family, port, ip);
+
+#define LOG_BIND6(sname, pid, comm, family, type, port, ip) \
+	if (syscall & LEVEL_IGLOO) \
+		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI6\n", sname, pid, comm,    type, family, port, ip);
 
 #define LOG_ARG(sc, value) \
 	if (syscall & LEVEL_IGLOO) \
@@ -203,8 +207,25 @@ static void vlan_hook(struct net_device *dev) {
 }
 
 static void bind_hook(struct socket *sock, struct sockaddr *uaddr, int addr_len) {
+	unsigned int family = htons(((struct sockaddr_in *)uaddr)->sin_family);
 	unsigned int sport = htons(((struct sockaddr_in *)uaddr)->sin_port);
-	LOG_BIND("bind", task_pid_nr(current), current->comm, sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"), sport);
+
+
+  // We need FAMILY, TCP/UDPIP:PORT
+  if (family == AF_INET) {
+    LOG_BIND("bind", task_pid_nr(current), current->comm,
+      "AF_INET",
+      sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"),
+      sport,
+      &((struct sockaddr_in *)uaddr)->sin_addr);
+  } else if (family == AF_INET6) {
+    LOG_BIND6("bind", task_pid_nr(current), current->comm,
+      "AF_INET6",
+      sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"),
+      sport,
+      &((struct sockaddr_in6 *)uaddr)->sin6_addr);
+  }
+
 	jprobe_return();
 }
 
