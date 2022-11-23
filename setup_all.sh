@@ -16,9 +16,9 @@ cp build/mipseb/vmlinux kernels/vmlinux.mipseb
 cp build/mipsel/vmlinux kernels/vmlinux.mipsel
 
 PROF=kernels/firmadyne_profiles.conf
-echo "[arm]" > $PROF
-cat panda_profile.arm* >> $PROF
-echo "[mipseb]" > $PROF
+echo "[armel]" > $PROF
+cat panda_profile.arm >> $PROF
+echo "[mipseb]" >> $PROF
 cat panda_profile.mipseb >> $PROF
 echo "[mipsel]" >> $PROF
 cat panda_profile.mipsel >> $PROF
