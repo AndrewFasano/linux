@@ -64,7 +64,7 @@
 	HOOK("sys_close", close_hook, close_probe) \
 \
 	/* Hook execution of programs */ \
-	HOOK("do_execve", execve_hook, execve_probe) \
+	HOOK("do_execveat_common", execve_hook, execve_probe) \
 	/* Hook forking of processes */ \
 	HOOK("do_fork", fork_hook, fork_probe) \
 	HOOK_RET("do_fork", NULL, fork_ret_hook, fork_ret_probe) \
@@ -98,6 +98,10 @@
 #define LOG_ENV(sc, value) \
 	if (syscall & LEVEL_IGLOO) \
 		printk(KERN_INFO "IGLOO: %s ENV: %s", sc, value);
+
+#define LOG_END(sc) \
+	if (syscall & LEVEL_IGLOO) \
+		printk(KERN_INFO "IGLOO: %s END", sc);
 
 static char *envp_init[] = { "HOME=/", "TERM=linux", "LD_PRELOAD=/firmadyne/libnvram.so", NULL };
 
@@ -294,7 +298,7 @@ static void open_hook(int dfd, const char __user *filename, int flags, umode_t m
 	jprobe_return();
 }
 
-static void execve_hook(const char *filename, const char __user *const __user *argv, const char __user *const __user *envp) {
+static void execve_hook(int fd, const char *filename, const char __user *const __user *argv, const char __user *const __user *envp, int flags) {
 	int i;
 	static char *argv_init[] = { "/firmadyne/console", NULL };
 	int rv;
@@ -314,7 +318,7 @@ static void execve_hook(const char *filename, const char __user *const __user *a
 		execute += 1;
 	}
 
-	if (syscall & LEVEL_IGLOO && strcmp("khelper", current->comm)) {
+	if (syscall & LEVEL_IGLOO && strcmp("khelper", current->comm) != 0) {
 		LOG_FILE("execve", task_pid_nr(current), current->comm, "");
 		for (i = 0; i >= 0 && i < count(argv, MAX_ARG_STRINGS); i++) {
 			LOG_ARG("execve", argv[i]);
@@ -323,6 +327,8 @@ static void execve_hook(const char *filename, const char __user *const __user *a
 		for (i = 0; i >= 0 && i < count(envp, MAX_ARG_STRINGS); i++) {
 			LOG_ENV("execve", envp[i]);
 		}
+
+    LOG_END("execve");
 	}
 
 	jprobe_return();
