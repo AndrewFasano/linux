@@ -79,25 +79,45 @@
 	HOOK("sys_faccessat", access_hook, access_probe) \
 	HOOK("vfs_lstat", lstat_hook, lstat_probe) \
 
-#define LOG_FILE(sname, pid, comm, filename) \
-	if (syscall & LEVEL_IGLOO) \
-		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, comm, filename);
+// User pointer filename
+#define LOG_FILE(sname, pid, current, filename) \
+	if (syscall & LEVEL_IGLOO && current != NULL) { \
+    char kp[128]; \
+    int len = strnlen_user(filename, 128); \
+    if (len < 0) { \
+      printk("IGLOO: Failed to read file details in %s: %d, %s\n", sname, pid, current->comm); \
+    } else { \
+      strncpy_from_user(kp, filename, len); \
+      printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, current->comm, kp); \
+    } \
+  }
 
-#define LOG_BIND(sname, pid, comm, family, type, port, ip) \
-	if (syscall & LEVEL_IGLOO) \
-		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI4\n", sname, pid, comm,    type, family, port, ip);
+// Kernel pointer filename
+#define LOG_FILE_K(sname, pid, current, filename) \
+	if (syscall & LEVEL_IGLOO && current != NULL) { \
+    printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, current->comm, filename); \
+  }
 
-#define LOG_BIND6(sname, pid, comm, family, type, port, ip) \
-	if (syscall & LEVEL_IGLOO) \
-		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI6\n", sname, pid, comm,    type, family, port, ip);
 
-#define LOG_ARG(sc, value) \
-	if (syscall & LEVEL_IGLOO) \
-		printk(KERN_INFO "IGLOO: %s ARG %s", sc, value);
+#define LOG_BIND(sname, pid, current, family, type, port, ip) \
+	if (syscall & LEVEL_IGLOO && current != NULL) \
+		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI4\n", sname, pid, current->comm,    type, family, port, ip);
 
-#define LOG_ENV(sc, value) \
+#define LOG_BIND6(sname, pid, current, family, type, port, ip) \
+	if (syscall & LEVEL_IGLOO && current != NULL) \
+		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI6\n", sname, pid, current->comm,    type, family, port, ip);
+
+#define LOG_EXECVE(sname, pid, current) \
+	if (syscall & LEVEL_IGLOO && current != NULL) \
+		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: \n", sname, pid, current->comm); // No file
+
+#define LOG_ARG(value) \
 	if (syscall & LEVEL_IGLOO) \
-		printk(KERN_INFO "IGLOO: %s ENV: %s", sc, value);
+		printk(KERN_INFO "IGLOO: execve ARG %s", value);
+
+#define LOG_ENV(value) \
+	if (syscall & LEVEL_IGLOO) \
+		printk(KERN_INFO "IGLOO: execve ENV: %s", value);
 
 #define LOG_END(sc) \
 	if (syscall & LEVEL_IGLOO) \
@@ -106,12 +126,12 @@
 static char *envp_init[] = { "HOME=/", "TERM=linux", "LD_PRELOAD=/firmadyne/libnvram.so", NULL };
 
 static void access_hook(int dfd, const char __user *filename, int mode, int flags) {
-	LOG_FILE("access", task_pid_nr(current), current->comm, filename);
+	LOG_FILE("access", task_pid_nr(current), current, filename);
 	jprobe_return();
 }
 
 static void lstat_hook(char* filename, struct kstat *stat) {
-	LOG_FILE("lstat", task_pid_nr(current), current->comm, filename);
+	LOG_FILE("lstat", task_pid_nr(current), current, filename);
 	jprobe_return();
 }
 
@@ -172,8 +192,8 @@ out:
 	jprobe_return();
 }
 
-static void mount_hook(char *dev_name, char *dir_name, char* type_page, unsigned long flags, void *data_page) {
-	LOG_FILE("mount", task_pid_nr(current), current->comm, dir_name);
+static void mount_hook(char *dev_name, const char __user *dir_name, char* type_page, unsigned long flags, void *data_page) {
+	LOG_FILE("mount", task_pid_nr(current), current, dir_name);
 	jprobe_return();
 }
 
@@ -189,7 +209,7 @@ static void ioctl_hook(struct file *filp, unsigned int cmd, unsigned long arg) {
 }
 
 static void unlink_hook(struct inode *dir, struct dentry *dentry) {
-	LOG_FILE("unlink", task_pid_nr(current), current->comm, dentry->d_name.name);
+	LOG_FILE_K("unlink", task_pid_nr(current), current, dentry->d_name.name);
 	jprobe_return();
 }
 
@@ -217,13 +237,13 @@ static void bind_hook(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 
   // We need FAMILY, TCP/UDPIP:PORT
   if (family == AF_INET) {
-    LOG_BIND("bind", task_pid_nr(current), current->comm,
+    LOG_BIND("bind", task_pid_nr(current), current,
       "AF_INET",
       sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"),
       sport,
       &((struct sockaddr_in *)uaddr)->sin_addr);
   } else if (family == AF_INET6) {
-    LOG_BIND6("bind", task_pid_nr(current), current->comm,
+    LOG_BIND6("bind", task_pid_nr(current), current,
       "AF_INET6",
       sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"),
       sport,
@@ -285,6 +305,7 @@ static void close_hook(unsigned int fd) {
 	jprobe_return();
 }
 
+/*
 static int open_ret_hook(struct kretprobe_instance *ri, struct pt_regs *regs) {
 	if (syscall & LEVEL_FS_R) {
 		printk(KERN_CONT ": close[PID: %d (%s)] = %ld\n", task_pid_nr(current), current->comm, regs_return_value(regs));
@@ -292,13 +313,23 @@ static int open_ret_hook(struct kretprobe_instance *ri, struct pt_regs *regs) {
 
 	return 0;
 }
+*/
 
 static void open_hook(int dfd, const char __user *filename, int flags, umode_t mode) {
-	LOG_FILE("open", task_pid_nr(current), current->comm, filename);
+  static struct filename *open_hook_fname;
+  open_hook_fname = getname(filename);
+  if (!IS_ERR(open_hook_fname)) {
+      LOG_FILE_K("open", task_pid_nr(current), current, open_hook_fname->name);
+  }
 	jprobe_return();
 }
 
-static void execve_hook(int fd, const char *filename, const char __user *const __user *argv, const char __user *const __user *envp, int flags) {
+static void execve_hook(int fd, const char *filename,
+    //const char __user *const __user *argv, const char __user *const __user *envp,
+    struct user_arg_ptr argv,
+    struct user_arg_ptr envp,
+    int flags) {
+
 	int i;
 	static char *argv_init[] = { "/firmadyne/console", NULL };
 	int rv;
@@ -312,22 +343,48 @@ static void execve_hook(int fd, const char *filename, const char __user *const _
 			execute = 1;
 		}
 
-		printk(KERN_WARNING "OFFSETS: offset of pid: 0x%x offset of comm: 0x%x\n", offsetof(struct task_struct, pid), offsetof(struct task_struct, comm));
+		//printk(KERN_WARNING "OFFSETS: offset of pid: 0x%x offset of comm: 0x%x\n", offsetof(struct task_struct, pid), offsetof(struct task_struct, comm));
 	}
 	else if (execute > 0) {
 		execute += 1;
 	}
 
-	if (syscall & LEVEL_IGLOO && strcmp("khelper", current->comm) != 0) {
-		LOG_FILE("execve", task_pid_nr(current), current->comm, "");
-		for (i = 0; i >= 0 && i < count(argv, MAX_ARG_STRINGS); i++) {
-			LOG_ARG("execve", argv[i]);
+
+	if (syscall & LEVEL_IGLOO && current != NULL && strcmp("khelper", current->comm) != 0) {
+    const char __user *p;
+    char kp[256];
+    int arg_count;
+    int len;
+		LOG_EXECVE("execve", task_pid_nr(current), current);
+    arg_count = count(argv, MAX_ARG_STRINGS);
+		for (i = 0; i >= 0 && i < arg_count; i++) {
+        p = get_user_arg_ptr(argv, i);
+        if (!p)
+          break;
+        if (IS_ERR(p))
+          break;
+
+        len = strnlen_user(p, 256); //MAX_ARG_STRLEN);
+        if (!len)
+          break;
+
+        strncpy_from_user(kp, p, len);
+        LOG_ARG(kp);
 		}
 
-		for (i = 0; i >= 0 && i < count(envp, MAX_ARG_STRINGS); i++) {
-			LOG_ENV("execve", envp[i]);
-		}
+    arg_count = count(envp, MAX_ARG_STRINGS);
+		for (i = 0; i >= 0 && i < arg_count; i++) {
+        p = get_user_arg_ptr(envp, i);
+        if (IS_ERR(p))
+          break;
 
+        len = strnlen_user(p, 256); //MAX_ARG_STRLEN);
+        if (!len)
+          break;
+
+        strncpy_from_user(kp, p, len);
+        LOG_ENV(kp);
+		}
     LOG_END("execve");
 	}
 
@@ -335,7 +392,7 @@ static void execve_hook(int fd, const char *filename, const char __user *const _
 }
 
 static void mknod_hook(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t dev) {
-	LOG_FILE("mknod", task_pid_nr(current), current->comm, dentry->d_name.name);
+	LOG_FILE_K("mknod", task_pid_nr(current), current, dentry->d_name.name);
 	jprobe_return();
 }
 
