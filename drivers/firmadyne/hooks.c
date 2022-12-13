@@ -329,10 +329,15 @@ static int open_ret_hook(struct kretprobe_instance *ri, struct pt_regs *regs) {
 
 static void open_hook(int dfd, const char __user *filename, int flags, umode_t mode) {
   static struct filename *open_hook_fname;
-  open_hook_fname = getname(filename);
-  if (!IS_ERR(open_hook_fname)) {
-		LOG_FILE_K("open", task_pid_nr(current), current, open_hook_fname->name);
-  }
+	if (syscall & LEVEL_IGLOO) {
+		// Normally we just check in the macro, but the call to getname allocates
+		// kernel memory, so let's avoid if we're not logging
+		open_hook_fname = getname(filename);
+		if (!IS_ERR(open_hook_fname)) {
+			LOG_FILE_K("open", task_pid_nr(current), current, open_hook_fname->name);
+		}
+		putname(open_hook_fname);
+	}
 	jprobe_return();
 }
 
