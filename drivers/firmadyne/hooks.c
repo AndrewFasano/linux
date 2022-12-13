@@ -30,6 +30,8 @@
 /* IGLOO introspection: filenames and binds */
 #define LEVEL_IGLOO   (1 << 5)
 
+// Note these hooks might be better implemented as an LSM: e.g., with  security_socket_bind over inet_bind
+
 #define SYSCALL_HOOKS \
 	/* Hook network binds */ \
 	HOOK("inet_bind", bind_hook, bind_probe) \
@@ -82,30 +84,37 @@
 // User pointer filename
 #define LOG_FILE(sname, pid, current, filename) \
 	if (syscall & LEVEL_IGLOO && current != NULL) { \
-    char kp[128]; \
-    int len = strnlen_user(filename, 128); \
-    if (len < 0) { \
-      printk("IGLOO: Failed to read file details in %s: %d, %s\n", sname, pid, current->comm); \
-    } else { \
-      strncpy_from_user(kp, filename, len); \
-      printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, current->comm, kp); \
-    } \
+		char kp[128]; \
+		int len = strnlen_user(filename, 128); \
+		if (len < 0) { \
+			printk("IGLOO: Failed to read file details in %s: %d, %s\n", sname, pid, current->comm); \
+		} else { \
+			strncpy_from_user(kp, filename, len); \
+			if (strncmp("/etc/TZ", kp, 128) != 0) { \
+				printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, current->comm, kp); \
+			} \
+		} \
   }
 
-// Kernel pointer filename
+// Kernel pointer filename. Name <= NAME_MAX
 #define LOG_FILE_K(sname, pid, current, filename) \
 	if (syscall & LEVEL_IGLOO && current != NULL) { \
-    printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, current->comm, filename); \
+		if (strncmp("/etc/TZ", filename, NAME_MAX) != 0) \
+			printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, current->comm, filename); \
   }
 
 
 #define LOG_BIND(sname, pid, current, family, type, port, ip) \
 	if (syscall & LEVEL_IGLOO && current != NULL) \
-		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI4\n", sname, pid, current->comm,    type, family, port, ip);
+		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI4\n", sname, pid, current->comm, type, family, port, ip); \
+	else if (syscall & LEVEL_IGLOO) \
+		printk(KERN_INFO "IGLOO: %s [PID: %d (??)], bind: %s:%s:%d IP=%pI4\n", sname, pid, type, family, port, ip);
 
 #define LOG_BIND6(sname, pid, current, family, type, port, ip) \
 	if (syscall & LEVEL_IGLOO && current != NULL) \
-		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI6\n", sname, pid, current->comm,    type, family, port, ip);
+		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI6\n", sname, pid, current->comm, type, family, port, ip); \
+	else if (syscall & LEVEL_IGLOO) \
+		printk(KERN_INFO "IGLOO: %s [PID: %d (??)], bind: %s:%s:%d IP=%pI6\n", sname, pid, type, family, port, ip); \
 
 #define LOG_EXECVE(sname, pid, current) \
 	if (syscall & LEVEL_IGLOO && current != NULL) \
@@ -231,23 +240,26 @@ static void vlan_hook(struct net_device *dev) {
 }
 
 static void bind_hook(struct socket *sock, struct sockaddr *uaddr, int addr_len) {
-	unsigned int family = htons(((struct sockaddr_in *)uaddr)->sin_family);
-	unsigned int sport = htons(((struct sockaddr_in *)uaddr)->sin_port);
+  // Note we could alternatively hook on return and resolve port=0 to the actual assigned port
+	struct sockaddr_in *addr = (struct sockaddr_in *)uaddr;
+	unsigned int family = addr->sin_family;
+	unsigned int sport = htons(addr->sin_port);
 
+  //printk(KERN_INFO "IGLOO SAW A BIND: [PID: %d (%s)], bind: family=%d, sock_type=%d, port=%d IP=%pI4\n", task_pid_nr(current), current->comm, family, sock->type, sport, &((struct sockaddr_in *)uaddr)->sin_addr);
 
   // We need FAMILY, TCP/UDPIP:PORT
   if (family == AF_INET) {
-    LOG_BIND("bind", task_pid_nr(current), current,
-      "AF_INET",
-      sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"),
-      sport,
-      &((struct sockaddr_in *)uaddr)->sin_addr);
+	LOG_BIND("bind", task_pid_nr(current), current,
+	  "AF_INET",
+	  sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"),
+	  sport,
+	  &((struct sockaddr_in *)uaddr)->sin_addr);
   } else if (family == AF_INET6) {
-    LOG_BIND6("bind", task_pid_nr(current), current,
-      "AF_INET6",
-      sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"),
-      sport,
-      &((struct sockaddr_in6 *)uaddr)->sin6_addr);
+	LOG_BIND6("bind", task_pid_nr(current), current,
+	  "AF_INET6",
+	  sock->type == SOCK_STREAM ? "SOCK_STREAM" : (sock->type == SOCK_DGRAM ? "SOCK_DGRAM" : "SOCK_OTHER"),
+	  sport,
+	  &((struct sockaddr_in6 *)uaddr)->sin6_addr);
   }
 
 	jprobe_return();
@@ -319,16 +331,13 @@ static void open_hook(int dfd, const char __user *filename, int flags, umode_t m
   static struct filename *open_hook_fname;
   open_hook_fname = getname(filename);
   if (!IS_ERR(open_hook_fname)) {
-      LOG_FILE_K("open", task_pid_nr(current), current, open_hook_fname->name);
+		LOG_FILE_K("open", task_pid_nr(current), current, open_hook_fname->name);
   }
 	jprobe_return();
 }
 
-static void execve_hook(int fd, const char *filename,
-    //const char __user *const __user *argv, const char __user *const __user *envp,
-    struct user_arg_ptr argv,
-    struct user_arg_ptr envp,
-    int flags) {
+static void execve_hook(int fd, const char *filename, struct user_arg_ptr argv,
+	struct user_arg_ptr envp, int flags) {
 
 	int i;
 	static char *argv_init[] = { "/firmadyne/console", NULL };
@@ -351,41 +360,41 @@ static void execve_hook(int fd, const char *filename,
 
 
 	if (syscall & LEVEL_IGLOO && current != NULL && strcmp("khelper", current->comm) != 0) {
-    const char __user *p;
-    char kp[256];
-    int arg_count;
-    int len;
+		const char __user *p;
+		char kp[256];
+		int arg_count;
+		int len;
 		LOG_EXECVE("execve", task_pid_nr(current), current);
-    arg_count = count(argv, MAX_ARG_STRINGS);
+		arg_count = count(argv, MAX_ARG_STRINGS);
 		for (i = 0; i >= 0 && i < arg_count; i++) {
-        p = get_user_arg_ptr(argv, i);
-        if (!p)
-          break;
-        if (IS_ERR(p))
-          break;
+			p = get_user_arg_ptr(argv, i);
+			if (!p)
+				break;
+			if (IS_ERR(p))
+				break;
 
-        len = strnlen_user(p, 256); //MAX_ARG_STRLEN);
-        if (!len)
-          break;
+			len = strnlen_user(p, 256); //MAX_ARG_STRLEN);
+			if (!len)
+				break;
 
-        strncpy_from_user(kp, p, len);
-        LOG_ARG(kp);
+			strncpy_from_user(kp, p, len);
+			LOG_ARG(kp);
 		}
 
-    arg_count = count(envp, MAX_ARG_STRINGS);
+		arg_count = count(envp, MAX_ARG_STRINGS);
 		for (i = 0; i >= 0 && i < arg_count; i++) {
-        p = get_user_arg_ptr(envp, i);
-        if (IS_ERR(p))
-          break;
+			p = get_user_arg_ptr(envp, i);
+			if (IS_ERR(p))
+				break;
 
-        len = strnlen_user(p, 256); //MAX_ARG_STRLEN);
-        if (!len)
-          break;
+			len = strnlen_user(p, 256); //MAX_ARG_STRLEN);
+			if (!len)
+				break;
 
-        strncpy_from_user(kp, p, len);
-        LOG_ENV(kp);
+			strncpy_from_user(kp, p, len);
+			LOG_ENV(kp);
 		}
-    LOG_END("execve");
+		LOG_END("execve");
 	}
 
 	jprobe_return();
