@@ -22,6 +22,19 @@
 /* So that the fiemap access checks can't overflow on 32 bit machines. */
 #define FIEMAP_MAX_EXTENTS	(UINT_MAX / sizeof(struct fiemap_extent))
 
+static int do_ioctl_fake = 0;
+static int __init ioctl_fake(char *str)
+{
+  if (strlen(str) && str[0] == 't') {
+    printk(KERN_INFO "IGLOO: enable ioctl faking\n");
+    do_ioctl_fake = 1;
+  }else{
+    printk(KERN_INFO "IGLOO: siable ioctl faking %s\n", str);
+  }
+  return 0;
+}
+__setup("IGLOO_IOCTL_FAKE=", ioctl_fake);
+
 /**
  * vfs_ioctl - call filesystem specific ioctl methods
  * @filp:	open file to invoke ioctl method on
@@ -696,6 +709,11 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	error = security_file_ioctl(f.file, cmd, arg);
 	if (!error)
 		error = do_vfs_ioctl(f.file, fd, cmd, arg);
+
+  if ((error == -ENODEV || error == -ENOTTY) && do_ioctl_fake) {
+    printk(KERN_INFO "IGLOO changing ioctl error from %d to 0\n", error);
+    error = 0;
+  }
 	fdput(f);
 	return error;
 }
