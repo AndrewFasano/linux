@@ -90,7 +90,7 @@
 			printk("IGLOO: Failed to read file details in %s: %d, %s\n", sname, pid, current->comm); \
 		} else { \
 			strncpy_from_user(kp, filename, len); \
-			if (strncmp("/etc/TZ", kp, 128) != 0) { \
+			if ((strncmp("/etc/TZ", kp, 128) != 0) && (strncmp("/firmadyne/", kp, 11) != 0)) { \
 				printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, current->comm, kp); \
 			} \
 		} \
@@ -99,7 +99,7 @@
 // Kernel pointer filename. Name <= NAME_MAX
 #define LOG_FILE_K(sname, pid, current, filename) \
 	if (syscall & LEVEL_IGLOO && current != NULL) { \
-		if (strncmp("/etc/TZ", filename, NAME_MAX) != 0) \
+    if ((strncmp("/etc/TZ", filename, 128) != 0) && (strncmp("/firmadyne/", filename, 11) != 0)) \
 			printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], file: %s\n", sname, pid, current->comm, filename); \
   }
 
@@ -122,15 +122,15 @@
 
 #define LOG_ARG(value) \
 	if (syscall & LEVEL_IGLOO) \
-		printk(KERN_INFO "IGLOO: execve ARG %s", value);
+		printk(KERN_INFO "IGLOO: execve ARG %s\n", value);
 
 #define LOG_ENV(value) \
 	if (syscall & LEVEL_IGLOO) \
-		printk(KERN_INFO "IGLOO: execve ENV: %s", value);
+		printk(KERN_INFO "IGLOO: execve ENV: %s\n", value);
 
 #define LOG_END(sc) \
 	if (syscall & LEVEL_IGLOO) \
-		printk(KERN_INFO "IGLOO: %s END", sc);
+		printk(KERN_INFO "IGLOO: %s END\n", sc);
 
 static char *envp_init[] = { "HOME=/", "TERM=linux", "LD_PRELOAD=/igloo/utils/libnvram.so", NULL, };
 
