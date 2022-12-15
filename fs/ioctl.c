@@ -15,6 +15,7 @@
 #include <linux/writeback.h>
 #include <linux/buffer_head.h>
 #include <linux/falloc.h>
+#include <linux/mount.h>
 #include "internal.h"
 
 #include <asm/ioctls.h>
@@ -28,8 +29,6 @@ static int __init ioctl_fake(char *str)
   if (strlen(str) && str[0] == 't') {
     printk(KERN_INFO "IGLOO: enable ioctl faking\n");
     do_ioctl_fake = 1;
-  }else{
-    printk(KERN_INFO "IGLOO: siable ioctl faking %s\n", str);
   }
   return 0;
 }
@@ -710,9 +709,24 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	if (!error)
 		error = do_vfs_ioctl(f.file, fd, cmd, arg);
 
-  if ((error == -ENODEV || error == -ENOTTY) && do_ioctl_fake) {
-    printk(KERN_INFO "IGLOO changing ioctl error from %d to 0\n", error);
-    error = 0;
+  if ((error == -ENODEV || error == -ENOTTY) && do_ioctl_fake && f.file != NULL) {
+    // If we're ioctl faking, it returned ENODEV/ENOTTY, and we have a filename, get the filename
+    char buf[256];
+		char *path = d_path(&f.file->f_path, buf, 256);
+    if (!IS_ERR(path)) {
+      if (
+        strncmp(path, "/dev", 4) == 0 && /* Must start with /dev? */ \
+          (strstr(path, "reset") == NULL)  /* XXX These are strings to devices we *don't* fake*/ \
+        ) {
+        // If it doesn't match, hide the error
+        printk(KERN_INFO "IGLOO: ioctl_hide_error[PID: %d (%s)]: path=%s, original_errno=%d\n",
+               task_pid_nr(current), current->comm, path, error);
+        error = 0;
+      }else{
+        printk(KERN_INFO "IGLOO: ioctl_allow_error[PID: %d (%s)]: path=%s, original_errno=%d\n",
+               task_pid_nr(current), current->comm, path, error);
+      }
+    }
   }
 	fdput(f);
 	return error;
