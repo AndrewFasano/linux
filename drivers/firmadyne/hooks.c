@@ -29,6 +29,8 @@
 #define LEVEL_EXEC    (1 << 4)
 /* IGLOO introspection: filenames and binds */
 #define LEVEL_IGLOO   (1 << 5)
+/* Igloo BIND only */
+#define LEVEL_IGLOO_BIND   (1 << 6)
 
 // Note these hooks might be better implemented as an LSM: e.g., with  security_socket_bind over inet_bind
 
@@ -109,13 +111,13 @@
 
 
 #define LOG_BIND(sname, pid, current, family, type, port, ip) \
-	if (syscall & LEVEL_IGLOO && current != NULL) \
+	if (((syscall & LEVEL_IGLOO) || (syscall & LEVEL_IGLOO_BIND)) && current != NULL) \
 		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI4\n", sname, pid, current->comm, type, family, port, ip); \
 	else if (syscall & LEVEL_IGLOO) \
 		printk(KERN_INFO "IGLOO: %s [PID: %d (??)], bind: %s:%s:%d IP=%pI4\n", sname, pid, type, family, port, ip);
 
 #define LOG_BIND6(sname, pid, current, family, type, port, ip) \
-	if (syscall & LEVEL_IGLOO && current != NULL) \
+	if (((syscall & LEVEL_IGLOO) || (syscall & LEVEL_IGLOO_BIND)) && current != NULL) \
 		printk(KERN_INFO "IGLOO: %s [PID: %d (%s)], bind: %s:%s:%d IP=%pI6\n", sname, pid, current->comm, type, family, port, ip); \
 	else if (syscall & LEVEL_IGLOO) \
 		printk(KERN_INFO "IGLOO: %s [PID: %d (??)], bind: %s:%s:%d IP=%pI6\n", sname, pid, type, family, port, ip); \

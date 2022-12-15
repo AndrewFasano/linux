@@ -726,7 +726,7 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
         printk(KERN_INFO "IGLOO: ioctl_hide_error[PID: %d (%s)]: path=%s, original_errno=%d\n",
                task_pid_nr(current), current->comm, path, error);
         error = 0;
-      }else{
+      } else {
         printk(KERN_INFO "IGLOO: ioctl_allow_error[PID: %d (%s)]: path=%s, original_errno=%d\n",
                task_pid_nr(current), current->comm, path, error);
       }
