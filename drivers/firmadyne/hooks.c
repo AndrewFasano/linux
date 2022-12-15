@@ -54,8 +54,12 @@
 	HOOK("vfs_mknod", mknod_hook, mknod_probe) \
 	/* Hook deletion of files */ \
 	HOOK("vfs_unlink", unlink_hook, unlink_probe) \
+  \
 	/* Hook IOCTL's on files */ \
-	HOOK("do_vfs_ioctl", ioctl_hook, ioctl_probe) \
+	/*HOOK("do_vfs_ioctl", ioctl_hook, ioctl_probe)*/ \
+	/*HOOK_RET("do_vfs_ioctl", ioctl_hook2, ioctl_hook_ret, ioctl_probe_ret) */\
+	/*HOOK_RET("do_vfs_ioctl", NULL, ioctl_hook_ret, ioctl_probe_ret)*/ \
+  \
 	/* Hook system reboot */ \
 	HOOK("sys_reboot", reboot_hook, reboot_probe) \
 \
@@ -206,16 +210,52 @@ static void mount_hook(char *dev_name, const char __user *dir_name, char* type_p
 	jprobe_return();
 }
 
+// Our IOCTL logging is done directly in the syscall handler along with ioctl_faking
+#if 0
 static void ioctl_hook(struct file *filp, unsigned int cmd, unsigned long arg) {
-	if (syscall & LEVEL_SYSTEM) {
-		printk(KERN_INFO MODULE_NAME": vfs_ioctl[PID: %d (%s)]: cmd:0x%x arg:0x%lx\n", task_pid_nr(current), current->comm, cmd, arg);
+  // Log IOCTLs: who issued, what path (unless path can't be resolved)
+	if (syscall & LEVEL_IGLOO) {
+    char buf[256];
+		char *path = d_path(flip.f_path, buf, 256);
+    if (!IS_ERR(path)) {
+      printk(KERN_INFO "IGLOO: ioctl[PID: %d (%s)]: path:%s, cmd:0x%x arg:0x%lx\n", task_pid_nr(current), current->comm, path, cmd, arg);
+    }else{
+      printk(KERN_INFO "IGLOO: ioctl[PID: %d (%s)]: path:[error], cmd:0x%x arg:0x%lx\n", task_pid_nr(current), current->comm, filp->f_path.dentry, cmd, arg);
+    }
 	}
-	//if (syscall & LEVEL_NETWORK && cmd == SIOCSIFHWADDR) {
-	//	printk(KERN_INFO MODULE_NAME": ioctl_SIOCSIFHWADDR[PID: %d (%s)]: dev:%s mac:0x%p 0x%p\n", task_pid_nr(current), current->comm, (char *)arg, *(unsigned long *)(arg + offsetof(struct ifreq, ifr_hwaddr)), *(unsigned long *)(arg + offsetof(struct ifreq, ifr_hwaddr) + 4));
-	//}
-
 	jprobe_return();
 }
+#endif
+
+#if 0
+/* Per hook private data */
+typedef struct my_data {
+  char path[256];
+}
+
+// kretprobe based: hook on enter, store dentry
+static int ioctl_hook2(struct kretprobe_instance *ri, struct pt_regs *regs) {
+	struct my_data *data;
+
+	if (!current->mm)
+		return 1;	// Skip kernel threads
+
+	if (syscall & LEVEL_IGLOO) {
+		printk(KERN_INFO "IGLOO: vfs_ioctl[PID: %d (%s)]: file:%pd, cmd:0x%x arg:0x%lx\n", task_pid_nr(current), current->comm, filp->f_path.dentry, cmd, arg);
+    data = (struct my_data *)ri->data;
+		char *path = d_path(&f.file->f_path, buf, 256);
+    strcpy(data->path, path, 256);
+	}
+	return 0;
+}
+
+static int ioctl_hook_ret(struct kretprobe_instance *ri, struct pt_regs *regs) {
+	if (syscall & LEVEL_IGLOO) {
+		printk(KERN_INFO "IGLOO: ioctl[PID: %d (%s)]: returns %ld\n", task_pid_nr(current), current->comm, regs_return_value(regs));
+	}
+  return 0;
+}
+#endif
 
 static void unlink_hook(struct inode *dir, struct dentry *dentry) {
 	LOG_FILE_K("unlink", task_pid_nr(current), current, dentry->d_name.name);
