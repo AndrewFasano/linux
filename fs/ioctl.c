@@ -719,7 +719,11 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
     if (!IS_ERR(path)) {
       if (
         strncmp(path, "/dev", 4) == 0 && /* Must start with /dev? */ \
-          (strstr(path, "reset") == NULL)  /* XXX These are strings to devices we *don't* fake*/ \
+          (  /* XXX These are strings to devices we *don't* fake*/ \
+            strncmp(path, "/dev/null", 9) != 0 && \
+            strncmp(path, "/dev/console", 12) != 0 && \
+            strstr(path, "reset") == NULL \
+          )
         ) {
         // If it doesn't match, hide the error
         printk(KERN_INFO "IGLOO: ioctl_hide_error[PID: %d (%s)]: path=%s, original_errno=%d\n",
