@@ -65,6 +65,7 @@
 
 #include <linux/uaccess.h>
 #include <linux/mroute6.h>
+#include <linux/hypercall.h>
 
 #include "ip6_offload.h"
 
@@ -286,6 +287,7 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	unsigned short snum;
 	int addr_type = 0;
 	int err = 0;
+	char ipbuf[64] = {0};
 
 	/* If the socket has its own bind function then use it. */
 	if (sk->sk_prot->bind)
@@ -406,6 +408,15 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	inet->inet_sport = htons(inet->inet_num);
 	inet->inet_dport = 0;
 	inet->inet_daddr = 0;
+
+	// Network hypercalls: PID, family, ip, port, proto.
+	igloo_hypercall(5930, task_pid_nr(current)); // Current PID (not sending procname, that's just current->comm if we do want)
+	igloo_hypercall(5931, sock->type==SOCK_STREAM ? 0 : sock->type==SOCK_DGRAM ? 1 : 2 ); // Type: 0=SOCK_STREAM, 1=SOCK_DGRAM, 2=other
+	snprintf(ipbuf, 64, "%pI6", &addr->sin6_addr);
+	igloo_hypercall(5933, (uint32_t)&ipbuf); // 5932 = ipv4 addr, 5933 = ipv6 addr
+	igloo_hypercall(5934, snum); // port (not flipped)
+
+
 out:
 	release_sock(sk);
 	return err;

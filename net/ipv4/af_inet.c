@@ -120,6 +120,7 @@
 #include <linux/mroute.h>
 #endif
 #include <net/l3mdev.h>
+#include <linux/hypercall.h>
 
 
 /* The inetsw table contains everything that inet_create needs to
@@ -438,6 +439,7 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	int chk_addr_ret;
 	u32 tb_id = RT_TABLE_LOCAL;
 	int err;
+	char ipbuf[64] = {0};
 
 	/* If the socket has its own bind function then use it. (RAW) */
 	if (sk->sk_prot->bind) {
@@ -518,6 +520,14 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	inet->inet_dport = 0;
 	sk_dst_reset(sk);
 	err = 0;
+
+	// Network hypercalls: PID, family, ip, port, proto.
+	igloo_hypercall(5930, task_pid_nr(current)); // Current PID (not sending procname, that's just current->comm if we do want)
+	igloo_hypercall(5931, sock->type==SOCK_STREAM ? 0 : sock->type==SOCK_DGRAM ? 1 : 2 ); // Type: 0=SOCK_STREAM, 1=SOCK_DGRAM, 2=other
+	snprintf(ipbuf, 64, "%pI4", &addr->sin_addr);
+	igloo_hypercall(5932, (uint32_t)&ipbuf); // 5932 = ipv4 addr, 5933 = ipv6 addr
+	igloo_hypercall(5934, snum); // port (not flipped)
+
 out_release_sock:
 	release_sock(sk);
 out:
