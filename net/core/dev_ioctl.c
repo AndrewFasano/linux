@@ -123,11 +123,8 @@ static int dev_ifsioc_locked(struct net *net, struct ifreq *ifr, unsigned int cm
 	int err;
 	struct net_device *dev = dev_get_by_name_rcu(net, ifr->ifr_name);
 
-	if (!dev) {
-		//return -ENODEV;
-    printk(KERN_INFO "IGLOO: ifsioc_locked ENODEV on cmd %x for %s, changed to eth0\n", cmd, ifr->ifr_name);
-	  dev = dev_get_by_name_rcu(net, "eth0");
-  }
+	if (!dev)
+		return -ENODEV;
 
 	switch (cmd) {
 	case SIOCGIFFLAGS:	/* Get interface flags */
@@ -247,11 +244,8 @@ static int dev_ifsioc(struct net *net, struct ifreq *ifr, unsigned int cmd)
 	struct net_device *dev = __dev_get_by_name(net, ifr->ifr_name);
 	const struct net_device_ops *ops;
 
-	if (!dev) {
-		//return -ENODEV;
-    printk(KERN_INFO "IGLOO: dev_ifsioc ENODEV on cmd %x for %s, changed to eth0\n", cmd, ifr->ifr_name);
-	  dev = dev_get_by_name_rcu(net, "eth0");
-  }
+	if (!dev)
+		return -ENODEV;
 
 	ops = dev->netdev_ops;
 
@@ -447,11 +441,6 @@ int dev_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 		dev_load(net, ifr.ifr_name);
 		rcu_read_lock();
 		ret = dev_ifsioc_locked(net, &ifr, cmd);
-    if (!ret) {
-      printk(KERN_INFO "IGLOO: net ioctl (1) %x failed for %s. Try again with loopback\n", cmd, ifr.ifr_name);
-      dev_load(net, "eth0"); // Loopback
-      ret = dev_ifsioc_locked(net, &ifr, cmd);
-    }
 		rcu_read_unlock();
 		if (!ret) {
 			if (colon)
@@ -490,11 +479,6 @@ int dev_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 		dev_load(net, ifr.ifr_name);
 		rtnl_lock();
 		ret = dev_ifsioc(net, &ifr, cmd);
-    if (!ret) {
-      printk(KERN_INFO "IGLOO: net ioctl (2) %x failed for %s. Try again with eth0\n", cmd, ifr.ifr_name);
-      dev_load(net, "eth0"); // Loopback
-      ret = dev_ifsioc(net, &ifr, cmd);
-    }
 		rtnl_unlock();
 		if (!ret) {
 			if (colon)
