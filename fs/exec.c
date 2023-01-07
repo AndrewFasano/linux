@@ -66,7 +66,6 @@
 #include "internal.h"
 
 #include <trace/events/sched.h>
-#define IGLOO_ARG_SHIFT 4
 
 int suid_dumpable = 0;
 
@@ -468,27 +467,21 @@ static int count(struct user_arg_ptr argv, int max)
  * processes's memory to the new process's stack.  The call to get_user_pages()
  * ensures the destination page is created and not swapped out.
  */
-static int copy_strings_prepend(int argc, struct user_arg_ptr argv,
-			struct linux_binprm *bprm, int prepend_strace)
+static int copy_strings(int argc, struct user_arg_ptr argv,
+			struct linux_binprm *bprm)
 {
 	struct page *kmapped_page = NULL;
 	char *kaddr = NULL;
 	unsigned long kpos = 0;
 	int ret;
-	unsigned long pos;
-	int offset;
 
 	while (argc-- > 0) {
 		const char __user *str;
 		int len;
-		int local_argc = argc;
-
-		if (prepend_strace) {
-			local_argc = argc - IGLOO_ARG_SHIFT;
-		}
+		unsigned long pos;
 
 		ret = -EFAULT;
-		str = get_user_arg_ptr(argv, local_argc);
+		str = get_user_arg_ptr(argv, argc);
 		if (IS_ERR(str))
 			goto out;
 
@@ -504,10 +497,9 @@ static int copy_strings_prepend(int argc, struct user_arg_ptr argv,
 		pos = bprm->p;
 		str += len;
 		bprm->p -= len;
-		// if prepend_strace need len to be a bit bigger?
 
 		while (len > 0) {
-			int bytes_to_copy;
+			int offset, bytes_to_copy;
 
 			if (fatal_signal_pending(current)) {
 				ret = -ERESTARTNOHAND;
@@ -523,10 +515,10 @@ static int copy_strings_prepend(int argc, struct user_arg_ptr argv,
 			if (bytes_to_copy > len)
 				bytes_to_copy = len;
 
-				offset -= bytes_to_copy;
-				pos -= bytes_to_copy;
-				str -= bytes_to_copy;
-				len -= bytes_to_copy;
+			offset -= bytes_to_copy;
+			pos -= bytes_to_copy;
+			str -= bytes_to_copy;
+			len -= bytes_to_copy;
 
 			if (!kmapped_page || kpos != (pos & PAGE_MASK)) {
 				struct page *page;
@@ -547,77 +539,13 @@ static int copy_strings_prepend(int argc, struct user_arg_ptr argv,
 				kpos = pos & PAGE_MASK;
 				flush_arg_page(bprm, kpos, kmapped_page);
 			}
-
 			if (copy_from_user(kaddr+offset, str, bytes_to_copy)) {
-				printk(KERN_INFO "IGLOO EFAULT\n");
 				ret = -EFAULT;
 				goto out;
-			}
-				else {
-				//printk(KERN_INFO "Copied %#x bytes for argc %d to %p+%x with value %s prepend=%d\n", bytes_to_copy, argc, &kaddr, offset, str, prepend_strace);
-				}
-			if (argc==IGLOO_ARG_SHIFT && len <= 0 && prepend_strace) {
-				// Add some more args for our strace
-				// i=instruction pointer, y=decode fds, f=follow,
-				// -o /dev/ttyS1 is our output XXX can we get from kern args
-				// s 500 = strings can be 500 chars long
-				const char buf[] = {"strace\0-fo\0/dev/ttyS1\0-s1000"};
-				len = sizeof(buf);
-				str = buf[sizeof(buf)-1];
-
-				while (len > 0) {
-					int bytes_to_copy;
-
-					if (fatal_signal_pending(current)) {
-						ret = -ERESTARTNOHAND;
-						goto out;
-					}
-					cond_resched();
-
-					offset = pos % PAGE_SIZE;
-					if (offset == 0)
-						offset = PAGE_SIZE;
-
-					bytes_to_copy = offset;
-					if (bytes_to_copy > len)
-						bytes_to_copy = len;
-
-						offset -= bytes_to_copy;
-						pos -= bytes_to_copy;
-						str -= bytes_to_copy;
-						len -= bytes_to_copy;
-						if (!kmapped_page || kpos != (pos & PAGE_MASK)) {
-							struct page *page;
-
-							page = get_arg_page(bprm, pos, 1);
-							if (!page) {
-								ret = -E2BIG;
-								goto out;
-							}
-
-							if (kmapped_page) {
-								flush_kernel_dcache_page(kmapped_page);
-								kunmap(kmapped_page);
-								put_arg_page(kmapped_page);
-							}
-							kmapped_page = page;
-							kaddr = kmap(kmapped_page);
-							kpos = pos & PAGE_MASK;
-							flush_arg_page(bprm, kpos, kmapped_page);
-						}
-						//printk(KERN_INFO "THISISIT\n");
-						memcpy(kaddr+offset, buf, sizeof(buf));
-						//printk(KERN_INFO "IGLOO Copied %x bytes to %p+%x with value %s\n", sizeof(buf),
-						//			 &kaddr, offset, buf);
-						bprm->p -= sizeof(buf);
-					}
-				argc = 0; // We just set the last 2 argv entries
 			}
 		}
 	}
 	ret = 0;
-
-
 out:
 	if (kmapped_page) {
 		flush_kernel_dcache_page(kmapped_page);
@@ -625,12 +553,6 @@ out:
 		put_arg_page(kmapped_page);
 	}
 	return ret;
-}
-
-static int copy_strings(int argc, struct user_arg_ptr argv,
-			struct linux_binprm *bprm)
-{
-	return copy_strings_prepend(argc, argv, bprm, false);
 }
 
 /*
@@ -1735,20 +1657,6 @@ static int exec_binprm(struct linux_binprm *bprm)
 	return ret;
 }
 
-
-static char igloo_trace_target[256] = {0};
-static int __init igloo_trace(char *str)
-{
-  if (!strlen(str)) {
-    printk(KERN_ERR "Invalid IGLOO_TRACE argument - ignoring\n");
-    return 1;
-  }
-  strlcpy(igloo_trace_target, str, 256);
-
-  return 0;
-}
-__setup("IGLOO_TRACE=", igloo_trace);
-
 /*
  * sys_execve() executes a new program.
  */
@@ -1762,8 +1670,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 	struct file *file;
 	struct files_struct *displaced;
 	int retval;
-  struct filename *orig_filename = NULL;
-  bool igloo_strace = false;
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
@@ -1800,24 +1706,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 	check_unsafe_exec(bprm);
 	current->in_execve = 1;
 
-	if (unlikely(strlen(igloo_trace_target)  /* Target must be set */ \
-			&& strcmp(filename->name, igloo_trace_target) == 0 /* This must be the target */ \
-			&& strcmp(current->comm, "strace") != 0)) /* can't strace the execve run by *strace*/ \
-	{
-		igloo_strace = true;
-		printk(KERN_INFO "IGLOO: Found target to trace '%s' launched by '%s'\n",
-				  filename->name, current->comm);
-		// exec of /bin/ls -a /foo transforms to /igloo/utils/strace -fo /proc/kmsg /bin/ls -a /foo
-
-		// back up original filename struct
-		orig_filename = kzalloc(sizeof(*filename), GFP_KERNEL);
-		if (!orig_filename)
-			return -ENOMEM;
-		memcpy(orig_filename, filename, sizeof(struct filename));
-		// Now clobber the kernel name string in the current struct
-		strcpy(filename->name, "/igloo/utils/strace\0");
-	}
-
 	file = do_open_execat(fd, filename, flags);
 	retval = PTR_ERR(file);
 	if (IS_ERR(file))
@@ -1847,7 +1735,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 			bprm->interp_flags |= BINPRM_FLAGS_PATH_INACCESSIBLE;
 		bprm->filename = pathbuf;
 	}
-
 	bprm->interp = bprm->filename;
 
 	retval = bprm_mm_init(bprm);
@@ -1855,10 +1742,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 		goto out_unmark;
 
 	bprm->argc = count(argv, MAX_ARG_STRINGS);
-
-	if (unlikely(igloo_strace))
-    bprm->argc += IGLOO_ARG_SHIFT; // strace -args outfile old_argv[0]
-
 	if ((retval = bprm->argc) < 0)
 		goto out;
 
@@ -1879,8 +1762,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (retval < 0)
 		goto out;
 
-	retval = copy_strings_prepend(bprm->argc, argv, bprm, igloo_strace);
-
+	retval = copy_strings(bprm->argc, argv, bprm);
 	if (retval < 0)
 		goto out;
 
@@ -1889,11 +1771,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 	retval = exec_binprm(bprm);
 	if (retval < 0)
 		goto out;
-
-	if (unlikely(igloo_strace)) {
-		kfree(filename);
-		filename = orig_filename;
-	}
 
 	/* execve succeeded */
 	current->fs->in_exec = 0;
