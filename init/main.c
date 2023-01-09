@@ -156,8 +156,17 @@ static int __init set_reset_devices(char *str)
 
 __setup("reset_devices", set_reset_devices);
 
-static const char *argv_init[MAX_INIT_ARGS+2] = { "init", NULL, };
+
 const char *envp_init[MAX_INIT_ENVS+2] = { "HOME=/", "TERM=linux", "LD_PRELOAD=/igloo/utils/libnvram.so", NULL, };
+static int __init set_no_fd_nvram(char *str)
+{
+  envp_init[2] = NULL;
+  return 1;
+}
+
+__setup("NO_FD_NVRAM", set_no_fd_nvram);
+
+static const char *argv_init[MAX_INIT_ARGS+2] = { "init", NULL, };
 static const char *panic_later, *panic_param;
 
 extern const struct obs_kernel_param __setup_start[], __setup_end[];
