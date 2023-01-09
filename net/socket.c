@@ -832,8 +832,8 @@ static ssize_t sock_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	if (!iov_iter_count(to))	/* Match SYS5 behaviour */
 		return 0;
 
-	log_socket(50, &sock->file);
-	igloo_hypercall(1054, (uint32_t)size);
+	log_socket(50, (uint32_t)sock->file);
+	igloo_hypercall(1054, (uint32_t)0);
 
 	res = sock_recvmsg(sock, &msg, msg.msg_flags);
 
@@ -1427,8 +1427,11 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 						   (struct sockaddr *)&address,
 						   addrlen);
 			if (!err) {
-				//printk(KERN_EMERG "Process %d (tgid %d) binds socket %p\n", task_pid_nr(current), task_tgid_nr(current), sock->file);
-				log_socket(10, &sock->file);
+
+				//printk(KERN_EMERG "Process %d (tgid %d) binds socket %x\n", task_pid_nr(current), task_tgid_nr(current),
+        //       (uint32_t)sock->file);
+
+				log_socket(10, (uint32_t)sock->file);
 				err = sock->ops->bind(sock,
 						      (struct sockaddr *)
 						      &address, addrlen);
@@ -1460,7 +1463,7 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 		err = security_socket_listen(sock, backlog);
 		if (!err) {
 			//printk(KERN_EMERG "Process %d (tgid %d) listens on socket at %p\n", task_pid_nr(current), task_tgid_nr(current), sock->file);
-			log_socket(20, &sock->file);
+			log_socket(20, (uint32_t)sock->file);
 			err = sock->ops->listen(sock, backlog);
     }
 
@@ -1532,8 +1535,8 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 		goto out_fd;
 
   //printk(KERN_EMERG "Process %d (tgid %d) accepts on socket at %p and gets new socket %p\n", task_pid_nr(current), task_tgid_nr(current), sock->file, newsock->file);
-  log_socket(40, &sock->file);
-  igloo_hypercall(44, (uint32_t)&newsock->file);
+  log_socket(40, (uint32_t)sock->file);
+  igloo_hypercall(1044, (uint32_t)newsock->file);
 
 	err = sock->ops->accept(sock, newsock, sock->file->f_flags);
 	if (err < 0)
@@ -1769,19 +1772,19 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	// 	2) net/ipv4/udp.c:udp_recvmsg
 	// which we've also hooked. But it's a bit easier to read the message here
 	// perhaps we should just figure out how to read the message there then drop this
-	log_socket(50, &sock->file);
+	log_socket(50, (uint32_t)sock->file);
 	igloo_hypercall(1054, (uint32_t)size);
 
-	if (recv_data != NULL) {
-		if (copy_from_user(recv_data, ubuf, min(sizeof(recv_data), size))) {
-			igloo_hypercall(1055, (uint32_t)0);
-		} else {
-			igloo_hypercall(1055, (uint32_t)&recv_data);
-		}
-	} else {
+	//if (recv_data != NULL) {
+	//	if (copy_from_user(recv_data, ubuf, min(sizeof(recv_data), size))) {
+	//		igloo_hypercall(1055, (uint32_t)0);
+	//	} else {
+	//		igloo_hypercall(1055, (uint32_t)recv_data);
+	//	}
+	//} else {
 		// No data
 		igloo_hypercall(1055, (uint32_t)0);
-  }
+  //}
 
 	err = sock_recvmsg(sock, &msg, flags);
 
@@ -1887,7 +1890,7 @@ SYSCALL_DEFINE2(shutdown, int, fd, int, how)
 		err = security_socket_shutdown(sock, how);
 		if (!err) {
 			//printk(KERN_EMERG "Process %d (tgid %d) shuts down socket %p\n", task_pid_nr(current), task_tgid_nr(current), sock->file);
-			log_socket(60, &sock->file);
+			log_socket(60, (uint32_t)sock->file);
 			err = sock->ops->shutdown(sock, how);
 		}
 		fput_light(sock->file, fput_needed);
@@ -2195,7 +2198,7 @@ static int ___sys_recvmsg(struct socket *sock, struct user_msghdr __user *msg,
 		flags |= MSG_DONTWAIT;
 
 	// recvmsg
-	log_socket(50, &sock->file);
+	log_socket(50, (uint32_t)sock->file);
 	igloo_hypercall(1054, (uint32_t)0);
 
 	err = (nosec ? sock_recvmsg_nosec : sock_recvmsg)(sock, msg_sys, flags);
