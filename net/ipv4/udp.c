@@ -1419,6 +1419,9 @@ EXPORT_SYMBOL(udp_ioctl);
 int udp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int noblock,
 		int flags, int *addr_len)
 {
+
+	// In socket.c we hook the various ways that sock_recvmsg could be called.
+	// That's often a pointer to here. Are there other ways this could be called?
 	struct inet_sock *inet = inet_sk(sk);
 	DECLARE_SOCKADDR(struct sockaddr_in *, sin, msg->msg_name);
 	struct sk_buff *skb;

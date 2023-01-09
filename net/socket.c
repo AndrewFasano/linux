@@ -107,6 +107,7 @@
 #include <linux/atalk.h>
 #include <net/busy_poll.h>
 #include <linux/errqueue.h>
+#include <linux/hypercall.h>
 
 #ifdef CONFIG_NET_RX_BUSY_POLL
 unsigned int sysctl_net_busy_read __read_mostly;
@@ -173,6 +174,14 @@ static DEFINE_PER_CPU(int, sockets_in_use);
  * Move socket addresses back and forth across the kernel/user
  * divide and look after the messy bits.
  */
+
+#define log_base 1000
+inline void log_socket(unsigned int offset, void* file_ptr) {
+  //printk(KERN_EMERG "Hypercall %d (%d through %d) in %d\n", offset, log_base+offset+1, log_base+offset+3, task_pid_nr(current));
+  igloo_hypercall(log_base + offset + 1, (uint32_t)task_pid_nr(current));
+  igloo_hypercall(log_base + offset + 2, (uint32_t)task_tgid_nr(current));
+  igloo_hypercall(log_base + offset + 3, (uint32_t)file_ptr);
+}
 
 /**
  *	move_addr_to_kernel	-	copy a socket address into kernel space
@@ -823,7 +832,12 @@ static ssize_t sock_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	if (!iov_iter_count(to))	/* Match SYS5 behaviour */
 		return 0;
 
+	log_socket(50, &sock->file);
+	igloo_hypercall(1054, (uint32_t)size);
+
 	res = sock_recvmsg(sock, &msg, msg.msg_flags);
+
+	igloo_hypercall(1058, (uint32_t)0); // TODO: figure out how to read the data
 	*to = msg.msg_iter;
 	return res;
 }
@@ -1038,6 +1052,9 @@ static unsigned int sock_poll(struct file *file, poll_table *wait)
 	 *      We can't return errors to poll, so it's either yes or no.
 	 */
 	sock = file->private_data;
+
+	//printk(KERN_EMERG "Process %d (tgid %d) polls on socket at %p\n", task_pid_nr(current), task_tgid_nr(current), file);
+	log_socket(30, &file);
 
 	if (sk_can_busy_loop(sock->sk)) {
 		/* this socket can poll_ll so tell the system call */
@@ -1409,10 +1426,13 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 			err = security_socket_bind(sock,
 						   (struct sockaddr *)&address,
 						   addrlen);
-			if (!err)
+			if (!err) {
+				//printk(KERN_EMERG "Process %d (tgid %d) binds socket %p\n", task_pid_nr(current), task_tgid_nr(current), sock->file);
+				log_socket(10, &sock->file);
 				err = sock->ops->bind(sock,
 						      (struct sockaddr *)
 						      &address, addrlen);
+      }
 		}
 		fput_light(sock->file, fput_needed);
 	}
@@ -1438,8 +1458,11 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 			backlog = somaxconn;
 
 		err = security_socket_listen(sock, backlog);
-		if (!err)
+		if (!err) {
+			//printk(KERN_EMERG "Process %d (tgid %d) listens on socket at %p\n", task_pid_nr(current), task_tgid_nr(current), sock->file);
+			log_socket(20, &sock->file);
 			err = sock->ops->listen(sock, backlog);
+    }
 
 		fput_light(sock->file, fput_needed);
 	}
@@ -1507,6 +1530,10 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	err = security_socket_accept(sock, newsock);
 	if (err)
 		goto out_fd;
+
+  //printk(KERN_EMERG "Process %d (tgid %d) accepts on socket at %p and gets new socket %p\n", task_pid_nr(current), task_tgid_nr(current), sock->file, newsock->file);
+  log_socket(40, &sock->file);
+  igloo_hypercall(44, (uint32_t)&newsock->file);
 
 	err = sock->ops->accept(sock, newsock, sock->file->f_flags);
 	if (err < 0)
@@ -1718,6 +1745,7 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	struct sockaddr_storage address;
 	int err, err2;
 	int fput_needed;
+	char recv_data[32];
 
 	err = import_single_range(READ, ubuf, size, &iov, &msg.msg_iter);
 	if (unlikely(err))
@@ -1735,7 +1763,28 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	msg.msg_iocb = NULL;
 	if (sock->file->f_flags & O_NONBLOCK)
 		flags |= MSG_DONTWAIT;
+
+	// XXX: We're about to call sock_recvmsg  which is probably going to either
+	// 	1) net/ipv4/af_inet.c:inet_recvmsg, or
+	// 	2) net/ipv4/udp.c:udp_recvmsg
+	// which we've also hooked. But it's a bit easier to read the message here
+	// perhaps we should just figure out how to read the message there then drop this
+	log_socket(50, &sock->file);
+	igloo_hypercall(1054, (uint32_t)size);
+
+	if (recv_data != NULL) {
+		if (copy_from_user(recv_data, ubuf, min(sizeof(recv_data), size))) {
+			igloo_hypercall(1055, (uint32_t)0);
+		} else {
+			igloo_hypercall(1055, (uint32_t)&recv_data);
+		}
+	} else {
+		// No data
+		igloo_hypercall(1055, (uint32_t)0);
+  }
+
 	err = sock_recvmsg(sock, &msg, flags);
+
 
 	if (err >= 0 && addr != NULL) {
 		err2 = move_addr_to_user(&address,
@@ -1836,8 +1885,11 @@ SYSCALL_DEFINE2(shutdown, int, fd, int, how)
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_shutdown(sock, how);
-		if (!err)
+		if (!err) {
+			//printk(KERN_EMERG "Process %d (tgid %d) shuts down socket %p\n", task_pid_nr(current), task_tgid_nr(current), sock->file);
+			log_socket(60, &sock->file);
 			err = sock->ops->shutdown(sock, how);
+		}
 		fput_light(sock->file, fput_needed);
 	}
 	return err;
@@ -2141,10 +2193,18 @@ static int ___sys_recvmsg(struct socket *sock, struct user_msghdr __user *msg,
 
 	if (sock->file->f_flags & O_NONBLOCK)
 		flags |= MSG_DONTWAIT;
+
+	// recvmsg
+	log_socket(50, &sock->file);
+	igloo_hypercall(1054, (uint32_t)0);
+
 	err = (nosec ? sock_recvmsg_nosec : sock_recvmsg)(sock, msg_sys, flags);
 	if (err < 0)
 		goto out_freeiov;
 	len = err;
+
+	// TODO: on response walk through the iovec and get the buffers to report back
+	igloo_hypercall(1056, (uint32_t)0);
 
 	if (uaddr != NULL) {
 		err = move_addr_to_user(&addr,

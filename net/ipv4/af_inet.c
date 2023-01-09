@@ -122,7 +122,6 @@
 #include <net/l3mdev.h>
 #include <linux/hypercall.h>
 
-
 /* The inetsw table contains everything that inet_create needs to
  * build a new socket.
  */
@@ -781,6 +780,14 @@ int inet_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 	int err;
 
 	sock_rps_record_flow(sk);
+
+	// In socket.c we hook the various ways that sock_recvmsg could be called.
+	// That's often a pointer to here. Are there other ways this could be called?
+	//igloo_hypercall(1051, (uint32_t)task_pid_nr(current));
+	//igloo_hypercall(1052, (uint32_t)task_tgid_nr(current));
+	//igloo_hypercall(1053, (uint32_t)&sock->file);
+	//igloo_hypercall(1054, (uint32_t)size);
+	//igloo_hypercall(1057, (uint32_t)0); // TODO, read the buffer from the IOVs
 
 	err = sk->sk_prot->recvmsg(sk, msg, size, flags & MSG_DONTWAIT,
 				   flags & ~MSG_DONTWAIT, &addr_len);
