@@ -1054,7 +1054,7 @@ static unsigned int sock_poll(struct file *file, poll_table *wait)
 	sock = file->private_data;
 
 	//printk(KERN_EMERG "Process %d (tgid %d) polls on socket at %p\n", task_pid_nr(current), task_tgid_nr(current), file);
-	log_socket(30, &file);
+	log_socket(30, (uint32_t)file);
 
 	if (sk_can_busy_loop(sock->sk)) {
 		/* this socket can poll_ll so tell the system call */
