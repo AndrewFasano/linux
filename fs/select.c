@@ -32,6 +32,7 @@
 #include <linux/vmalloc.h>
 
 #include <linux/uaccess.h>
+#include <linux/hypercall.h>
 
 
 /*
@@ -410,6 +411,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec64 *end_time)
 	u64 slack = 0;
 	unsigned int busy_flag = net_busy_loop_on() ? POLL_BUSY_LOOP : 0;
 	unsigned long busy_end = 0;
+  struct socket *sock;
 
 	rcu_read_lock();
 	retval = max_select_fd(n, fds);
@@ -456,6 +458,15 @@ int do_select(int n, fd_set_bits *fds, struct timespec64 *end_time)
 					continue;
 				f = fdget(i);
 				if (f.file) {
+
+          int _err = 0;
+          sock = sock_from_file(f.file, &_err);
+          if (sock) {
+              igloo_hypercall(1000 + 31 + 1, (uint32_t)task_pid_nr(current));
+              igloo_hypercall(1000 + 32 + 2, (uint32_t)task_tgid_nr(current));
+              igloo_hypercall(1000 + 33 + 3, (uint32_t)f.file);
+          }
+
 					const struct file_operations *f_op;
 					f_op = f.file->f_op;
 					mask = DEFAULT_POLLMASK;
