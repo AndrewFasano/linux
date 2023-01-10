@@ -280,6 +280,7 @@
 #include <linux/uaccess.h>
 #include <asm/ioctls.h>
 #include <net/busy_poll.h>
+#include <linux/hypercall.h>
 
 int sysctl_tcp_min_tso_segs __read_mostly = 2;
 
@@ -1669,6 +1670,7 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 	if (flags & MSG_PEEK) {
 		peek_seq = tp->copied_seq;
 		seq = &peek_seq;
+    igloo_hypercall(1059, 1); // It's a MSG_PEEK
 	}
 
 	target = sock_rcvlowat(sk, flags & MSG_WAITALL, len);
