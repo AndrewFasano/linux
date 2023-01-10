@@ -60,6 +60,7 @@
 #include <asm/unistd.h>
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
+#include <linux/hypercall.h>
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
 {
@@ -782,6 +783,11 @@ void __noreturn do_exit(long code)
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		schedule();
 	}
+
+  igloo_hypercall(1071, (uint32_t)task_pid_nr(current));
+  igloo_hypercall(1072, (uint32_t)task_tgid_nr(current));
+  igloo_hypercall(1073, (uint32_t)code);
+	//printk(KERN_EMERG "Process %s (%d, %d) exits %d\n", current->comm, task_pid_nr(current), task_tgid_nr(current), code);
 
 	exit_signals(tsk);  /* sets PF_EXITING */
 	/*
