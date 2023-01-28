@@ -107,6 +107,7 @@
 #include <linux/atalk.h>
 #include <net/busy_poll.h>
 #include <linux/errqueue.h>
+#include <linux/uio.h>
 #include <linux/hypercall.h>
 
 #ifdef CONFIG_NET_RX_BUSY_POLL
@@ -748,7 +749,16 @@ EXPORT_SYMBOL_GPL(__sock_recv_ts_and_drops);
 static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
 				     int flags)
 {
-	return sock->ops->recvmsg(sock, msg, msg_data_left(msg), flags);
+	int rv = sock->ops->recvmsg(sock, msg, msg_data_left(msg), flags);
+
+   char buf[512]; // Let's say this is our max buffer size for now
+   int n_bytes = copy_from_iter(&buf, sizeof(buf), &msg->msg_iter);
+ 
+	// After the recv, report the number of bytes recvd and their contents
+	igloo_hypercall(1054, (uint32_t)n_bytes);
+	igloo_hypercall(1055, (uint32_t)&buf); // TODO this is a *copy* of the data!!
+
+  return rv;
 }
 
 int sock_recvmsg(struct socket *sock, struct msghdr *msg, int flags)
@@ -822,6 +832,7 @@ static ssize_t sock_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	struct msghdr msg = {.msg_iter = *to,
 			     .msg_iocb = iocb};
 	ssize_t res;
+  char buf[1024];
 
 	if (file->f_flags & O_NONBLOCK)
 		msg.msg_flags = MSG_DONTWAIT;
@@ -833,12 +844,10 @@ static ssize_t sock_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		return 0;
 
 	log_socket(50, (uint32_t)sock->file);
-	igloo_hypercall(1054, (uint32_t)0);
 
 	res = sock_recvmsg(sock, &msg, msg.msg_flags);
-
-	igloo_hypercall(1058, (uint32_t)0); // TODO: figure out how to read the data
 	*to = msg.msg_iter;
+
 	return res;
 }
 
@@ -1770,21 +1779,7 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	// XXX: We're about to call sock_recvmsg  which is probably going to either
 	// 	1) net/ipv4/af_inet.c:inet_recvmsg, or
 	// 	2) net/ipv4/udp.c:udp_recvmsg
-	// which we've also hooked. But it's a bit easier to read the message here
-	// perhaps we should just figure out how to read the message there then drop this
 	log_socket(50, (uint32_t)sock->file);
-	igloo_hypercall(1054, (uint32_t)size);
-
-	//if (recv_data != NULL) {
-	//	if (copy_from_user(recv_data, ubuf, min(sizeof(recv_data), size))) {
-	//		igloo_hypercall(1055, (uint32_t)0);
-	//	} else {
-	//		igloo_hypercall(1055, (uint32_t)recv_data);
-	//	}
-	//} else {
-		// No data
-		igloo_hypercall(1055, (uint32_t)0);
-  //}
 
 	err = sock_recvmsg(sock, &msg, flags);
 
@@ -2199,15 +2194,11 @@ static int ___sys_recvmsg(struct socket *sock, struct user_msghdr __user *msg,
 
 	// recvmsg
 	log_socket(50, (uint32_t)sock->file);
-	igloo_hypercall(1054, (uint32_t)0);
 
 	err = (nosec ? sock_recvmsg_nosec : sock_recvmsg)(sock, msg_sys, flags);
 	if (err < 0)
 		goto out_freeiov;
 	len = err;
-
-	// TODO: on response walk through the iovec and get the buffers to report back
-	igloo_hypercall(1056, (uint32_t)0);
 
 	if (uaddr != NULL) {
 		err = move_addr_to_user(&addr,

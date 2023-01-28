@@ -24,22 +24,22 @@ OUTDIR=~/git/HyDE/fws/
 
 # MIPS: make malta_kvm_defconfig, then enable vsockets and debug_info
 
-echo "Configuring kernel"
-mkdir -p build/${ARCH}
-cp config.${ARCH} build/${ARCH}/.config
-make ARCH=$SHORT_ARCH CROSS_COMPILE=${CROSS_CC} O=build/${ARCH} olddefconfig
+#echo "Configuring kernel"
+#mkdir -p build/${ARCH}
+#cp config.${ARCH} build/${ARCH}/.config
+#make ARCH=$SHORT_ARCH CROSS_COMPILE=${CROSS_CC} O=build/${ARCH} olddefconfig
 
 echo "Building kernel"
 make ARCH=${SHORT_ARCH} CROSS_COMPILE=${CROSS_CC} O=build/${ARCH} $TARGETS -j$(nproc)
 
-echo 'Updating PANDA info'
-${PANDA}/panda/plugins/osi_linux/utils/kernelinfo_gdb/run.sh ./build/${ARCH}/vmlinux ./panda_profile.${ARCH}
-
-if [ -e build/${ARCH}/arch/${SHORT_ARCH}/boot/zImage ]; then
-  cp build/${ARCH}/arch/${SHORT_ARCH}/boot/zImage  ${OUTDIR}/zImage4.${ARCH}
-fi
+#echo 'Updating PANDA info'
+#${PANDA}/panda/plugins/osi_linux/utils/kernelinfo_gdb/run.sh ./build/${ARCH}/vmlinux ./panda_profile.${ARCH}
+#
+#if [ -e build/${ARCH}/arch/${SHORT_ARCH}/boot/zImage ]; then
+#  cp build/${ARCH}/arch/${SHORT_ARCH}/boot/zImage  ${OUTDIR}/zImage4.${ARCH}
+#fi
 
 cp build/${ARCH}/vmlinux ${OUTDIR}/vmlinux4.${ARCH}
 
-echo "[${ARCH}]" > ${OUTDIR}/${ARCH}_profile4.conf 
-cat panda_profile.${ARCH} >> ${OUTDIR}/${ARCH}_profile4.conf 
+#echo "[${ARCH}]" > ${OUTDIR}/${ARCH}_profile4.conf 
+#cat panda_profile.${ARCH} >> ${OUTDIR}/${ARCH}_profile4.conf 
