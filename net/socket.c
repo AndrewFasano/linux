@@ -746,17 +746,309 @@ void __sock_recv_ts_and_drops(struct msghdr *msg, struct sock *sk,
 }
 EXPORT_SYMBOL_GPL(__sock_recv_ts_and_drops);
 
+#define MIN(a,b) a < b ? a : b
+#if 1
+// These are from qemu, might be some help?
+size_t iov_to_buf_full(const struct iovec *iov, const unsigned int iov_cnt,
+                       size_t offset, void *buf, size_t bytes);
+
+size_t iov_to_buf_full(const struct iovec *iov, const unsigned int iov_cnt,
+                       size_t offset, void *buf, size_t bytes)
+{
+    size_t done;
+    unsigned int i;
+    for (i = 0, done = 0; (offset || done < bytes) && i < iov_cnt; i++) {
+        if (offset < iov[i].iov_len) {
+            size_t len = MIN(iov[i].iov_len - offset, bytes - done);
+            memcpy(buf + done, iov[i].iov_base + offset, len);
+            done += len;
+            offset = 0;
+        } else {
+            offset -= iov[i].iov_len;
+        }
+    }
+    //assert(offset == 0);
+    return done;
+}
+
+static inline size_t
+iov_to_buf(const struct iovec *iov, const unsigned int iov_cnt,
+           size_t offset, void *buf, size_t bytes);
+
+static inline size_t
+iov_to_buf(const struct iovec *iov, const unsigned int iov_cnt,
+           size_t offset, void *buf, size_t bytes)
+{
+    if (__builtin_constant_p(bytes) && iov_cnt &&
+        offset <= iov[0].iov_len && bytes <= iov[0].iov_len - offset) {
+        memcpy(buf, iov[0].iov_base + offset, bytes);
+        return bytes;
+    } else {
+        return iov_to_buf_full(iov, iov_cnt, offset, buf, bytes);
+    }
+}
+
+size_t iov_memset(const struct iovec *iov, const unsigned int iov_cnt,
+                  size_t offset, int fillc, size_t bytes)
+{
+    size_t done;
+    unsigned int i;
+    for (i = 0, done = 0; (offset || done < bytes) && i < iov_cnt; i++) {
+        if (offset < iov[i].iov_len) {
+            size_t len = MIN(iov[i].iov_len - offset, bytes - done);
+            memset(iov[i].iov_base + offset, fillc, len);
+            done += len;
+            offset = 0;
+        } else {
+            offset -= iov[i].iov_len;
+        }
+    }
+    //assert(offset == 0);
+    return done;
+}
+#endif
+
+size_t iov_from_buf_full(const struct iovec *iov, unsigned int iov_cnt,
+                         size_t offset, const void *buf, size_t bytes)
+{
+    size_t done;
+    unsigned int i;
+    for (i = 0, done = 0; (offset || done < bytes) && i < iov_cnt; i++) {
+        if (offset < iov[i].iov_len) {
+            size_t len = MIN(iov[i].iov_len - offset, bytes - done);
+            printk(KERN_EMERG "M2IOV_full: copying %d bytes into %p\n", len, &iov[i].iov_base);
+            memcpy(iov[i].iov_base + offset, buf + done, len);
+            done += len;
+            offset = 0;
+        } else {
+            offset -= iov[i].iov_len;
+        }
+    }
+    return done;
+}
+
+/*
+ *	Copy kernel buf to kernel iovec. Returns -EFAULT on error.
+ *
+ *	Note: this modifies the original iovec.
+ *	https://github.com/spotify/linux/blob/master/net/core/iovec.c#L99-L103
+ */
+
+// Clobber this bad boy right in place!
+int memcpy_toiovec(struct iovec *orig_iov, int iov_cnt, unsigned char *kdata, int len, size_t offset)
+{
+  struct iovec *iov = orig_iov;
+  int this_iov_remaining_len = iov->iov_len;
+  void* this_iov_base = iov->iov_base;
+  int used_iovs = 0;
+
+  //printk(KERN_EMERG "M2IOV: Initial iovec is at %p with %d bytes available in first iov\n", iov,
+  //  this_iov_remaining_len);
+  //printk(KERN_EMERG "<orig_kdata>%s</orig_kdata>\n", kdata);
+
+	while (len > 0) {
+		if (this_iov_remaining_len) {
+			int copy = min_t(unsigned int, len, this_iov_remaining_len);
+      if (offset != 0) {
+        copy = min_t(unsigned int, copy, offset);
+        // If offset is < copy we only want to shift up to offset becoming 0
+      }
+
+      if (offset == 0) {
+        memcpy(this_iov_base, kdata, copy); // Clobber up to "remaining_len" with our data. Remaining_len
+                                            // is the length left to clobber in this IOV, not available bytes after
+
+        //printk(KERN_EMERG "M2IOV<iovec at %p with %d bytes this_base=%x, this_rem_len=%d>%*.s</iovec>\n",
+        //          iov, copy, this_iov_base, this_iov_remaining_len, copy, this_iov_base);
+
+        //printk(KERN_EMERG "<kdata %d bytes>%*.s</kdata>\n", copy, copy, kdata);
+
+        // Update output state (bytes remain, output buffer pointer)
+        len -= copy;
+        kdata += copy;
+      } else {
+        offset -= copy;
+      }
+
+      // Update stats about the current iov
+			this_iov_base += copy;
+			this_iov_remaining_len -= copy;
+
+      if (len == 0 && this_iov_remaining_len) {
+        memset(this_iov_base, 0, this_iov_remaining_len); // Zero everything in this IOV after our payload
+      }
+		}
+
+    // Now we advance to the next IOV
+    if (used_iovs < iov_cnt) {
+      iov++;
+      this_iov_remaining_len = iov->iov_len;
+      this_iov_base = iov->iov_base;
+    } else {
+      printk(KERN_EMERG "FATAL M2IOV out of IOVs after using %d\n", used_iovs);
+    }
+    used_iovs++;
+	}
+
+	return 0;
+
+  /*
+  if (len < iov[0].iov_len) {
+    printk(KERN_EMERG "M2IOV: easy case\n");
+    memcpy(iov[0].iov_base, kdata, len);
+    return len;
+  } else {
+    printk(KERN_EMERG "M2IOV: hard case case have %d bytes but only %d available in first IOV\n", len, iov[0].iov_len);
+    return iov_from_buf_full(iov, iov_cnt, 0, kdata, len);
+  }*/
+
+  /*
+	while (len > 0) {
+		if (iov->iov_len) {
+			int copy = min_t(unsigned int, iov->iov_len, len);
+      void * old_base = iov->iov_base;
+      printk(KERN_EMERG "M2IOV: Placing up to %d bytes in iov at %p\n", copy, iov);
+
+      iov->iov_base = memcpy(iov->iov_base, kdata, copy);
+      copy = iov->iov_base - old_base; // how many bytes did we REALLY copy?
+      printk(KERN_EMERG "M2IOV: actually placed %d bytes\n", copy);
+      //if (copy+old_base != iov->iov_base) { // XXX it's a kernel address, right?
+      //  printk(KERN_EMERG "Unepxected offset after memcpy: expected %x but at %x\n",
+      //    (uint32_t)copy + (uint32_t)old_base, (uint32_t)iov->iov_base);
+      //}
+			//if (copy_to_user(iov->iov_base, kdata, copy))
+			//	return -EFAULT;
+			kdata += copy;
+			len -= copy;
+			iov->iov_len -= copy;
+			iov->iov_base += copy;
+		}
+		iov++;
+	}*/
+
+	return 0;
+}
+
+/*
+ *	Copy iovec to kernel does NOT modify original IOVEC.
+ *
+ *	Modified from:
+ *	https://github.com/spotify/linux/blob/master/net/core/iovec.c#L99-L103
+ */
+int memcpy_fromiovec(unsigned char *kdata, struct iovec *orig_iov, int len, size_t offset)
+{
+  struct iovec *iov = orig_iov;
+
+  int this_iov_remaining_len = iov->iov_len;
+  void* this_iov_base = iov->iov_base;
+
+  //printk(KERN_EMERG "mFiov: Initial iovec is at %p with %d bytes available in first iov\n", iov,
+  //  this_iov_remaining_len);
+
+	while (len > 0) {
+		if (this_iov_remaining_len) {
+			int copy = min_t(unsigned int, len, this_iov_remaining_len);
+      if (offset != 0) {
+        // if offset < copy we only want to shift to making offset 0
+			  copy = min_t(unsigned int, copy, offset);
+      }
+
+      if (offset == 0) {
+        memcpy(kdata, this_iov_base, copy); // XXX it's a kernel address, right?
+
+        //printk(KERN_EMERG "mFiov<iovec at %p with %d bytes this_base=%x, this_rem_len=%d>%*.s</iovec>\n",
+        //          iov, copy, this_iov_base, this_iov_remaining_len, copy, kdata);
+
+        // Update output state (bytes remain, output buffer pointer)
+        len -= copy;
+        kdata += copy;
+      } else {
+        offset -= copy;
+      }
+
+      // Update stats about the current iov
+			this_iov_base += copy;
+			this_iov_remaining_len -= copy;
+		}
+
+    // Now we advance to the next IOV
+		iov++;
+    this_iov_remaining_len = iov->iov_len;
+    this_iov_base = iov->iov_base;
+	}
+
+	return 0;
+}
+
 static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
 				     int flags)
 {
-	int rv = sock->ops->recvmsg(sock, msg, msg_data_left(msg), flags);
 
-   char buf[512]; // Let's say this is our max buffer size for now
-   int n_bytes = copy_from_iter(&buf, sizeof(buf), &msg->msg_iter);
- 
-	// After the recv, report the number of bytes recvd and their contents
-	igloo_hypercall(1054, (uint32_t)n_bytes);
-	igloo_hypercall(1055, (uint32_t)&buf); // TODO this is a *copy* of the data!!
+ int rv = sock->ops->recvmsg(sock, msg, msg_data_left(msg), flags);
+ // XXX ops->recvmsg *POPULATES* the IOV
+
+ //printk(KERN_EMERG "BUFFER: <after recvmsg>%s</after>\n", msg->msg_iter.iov->iov_base);
+
+ // This is where we hook all the various recv's that sockets can do. I believe
+ // this function is used for everything we care about
+ // Allocate a flat buffer big enough to hold the union of all the IOVs message
+ volatile char *buf;
+ size_t buf_sz = iov_iter_count(&msg->msg_iter);
+ buf = kmalloc(buf_sz, GFP_KERNEL); // XXX should we put a max on this? Or a min that's our input size?
+
+ //printk(KERN_EMERG "After RECVMSG for socket at %p with flags 0x%x size 0x%x\n", sock, flags, buf_sz);
+
+ if (buf != NULL) {
+   size_t orig_iov_count = iov_iter_npages(&msg->msg_iter, 10);
+   int page_idx;
+   volatile char* buf_ptr = buf;
+   volatile uint32_t have_modifications = -1;
+   int rv;
+   struct iovec * iov_base = msg->msg_iter.iov;
+
+   // Read iovec into a buffer
+   //rv = memcpy_fromiovec(buf, iov_base, buf_sz, msg->msg_iter.iov_offset);
+   rv = memcpy_fromiovec(buf, iov_base, buf_sz, 0);
+   if (rv < 0) {
+     printk(KERN_EMERG "TODO: memcpy from iovec fails: %d with base at %p\n", rv, msg->msg_iter.iov);
+     buf_sz = 0; // XXX idk
+   }
+   
+   //printk(KERN_EMERG "<INPUT BUFFER %d, %d>%s</INPUT BUFFER>\n", orig_iov_count, buf_sz, buf);
+
+   // HYPERCALLs with buffer size and contents
+   igloo_hypercall(1054, (uint32_t)buf_sz);
+   igloo_hypercall(1055, (uint32_t)buf);
+
+   // HYPERCALL to check if plugin wants to modify buffer
+   // Should become 1 if modified, 0 if unmodified. Retry in a loop to handle if it's ever paged out
+   while (have_modifications == -1) {
+     igloo_hypercall(1056, (uint32_t)&have_modifications);
+   }
+
+   // If modified, copy new buffer back into IOVEC
+   if (have_modifications != 0) {
+     size_t new_buf_sz = 0;
+     printk(KERN_EMERG "plugin wants to modify the buffer!\n");
+
+     // Get new buffer in buf
+     igloo_hypercall(1057, (uint32_t)&new_buf_sz); // Includes null terminator
+     igloo_hypercall(1058, (uint32_t)buf); // Null terminated
+     //buf_ptr = buf;
+
+     //memcpy_toiovec(iov_base, orig_iov_count, buf, new_buf_sz, msg->msg_iter.iov_offset);
+     memcpy_toiovec(iov_base, orig_iov_count, buf, new_buf_sz, 0);
+
+     // DEBUG PRINT:
+     //memcpy_fromiovec(buf, iov_base, new_buf_sz, msg->msg_iter.iov_offset);
+     memcpy_fromiovec(buf, iov_base, new_buf_sz, 0);
+     //printk(KERN_EMERG "<FINAL BUFFER>%s</FINAL BUFFER>\n", buf);
+     // END DEBUG
+   }
+   kfree(buf);
+ } else {
+     printk(KERN_EMERG "Failed to allocate scratch buffer in sock_recvmsg\n");
+ }
 
   return rv;
 }

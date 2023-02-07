@@ -19,10 +19,14 @@ fi
 # works for kernel 4.10
 CROSS_CC=/cross/${ARCH}-linux-musl${ABI}/bin/${ARCH}-linux-musl${ABI}-
 
-echo "Configuring kernel"
-mkdir -p build/${ARCH}
-cp config.${ARCH} build/${ARCH}/.config
-make ARCH=$SHORT_ARCH CROSS_COMPILE=${CROSS_CC} O=build/${ARCH} olddefconfig
+if [ ! -e build/${ARCH}/.config ] || [ "$(diff build/${ARCH}/.config config.${ARCH} | wc -l)" -eq 0 ];  then
+  echo "Configuring kernel"
+  mkdir -p build/${ARCH}
+  cp config.${ARCH} build/${ARCH}/.config
+  make ARCH=$SHORT_ARCH CROSS_COMPILE=${CROSS_CC} O=build/${ARCH} olddefconfig
+else
+  echo "No need to reconfigure kernel"
+fi
 
 echo "Building kernel"
 make ARCH=${SHORT_ARCH} CROSS_COMPILE=${CROSS_CC} O=build/${ARCH} $TARGETS -j$(nproc)
