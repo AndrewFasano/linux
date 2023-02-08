@@ -442,6 +442,7 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 
 	/* If the socket has its own bind function then use it. (RAW) */
 	if (sk->sk_prot->bind) {
+    // TODO: should we hook here?
 		err = sk->sk_prot->bind(sk, uaddr, addr_len);
 		goto out;
 	}
@@ -525,7 +526,8 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	igloo_hypercall(5931, sock->type==SOCK_STREAM ? 0 : sock->type==SOCK_DGRAM ? 1 : 2 ); // Type: 0=SOCK_STREAM, 1=SOCK_DGRAM, 2=other
 	snprintf(ipbuf, 64, "%pI4", &addr->sin_addr);
 	igloo_hypercall(5932, (uint32_t)&ipbuf); // 5932 = ipv4 addr, 5933 = ipv6 addr
-	igloo_hypercall(5934, snum); // port (not flipped)
+
+	igloo_hypercall(5934, inet_sk(sk)->inet_num); // port (not flipped) - unlike snum this will have real port for 0
 
 out_release_sock:
 	release_sock(sk);
