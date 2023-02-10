@@ -840,20 +840,20 @@ size_t iov_from_buf_full(const struct iovec *iov, unsigned int iov_cnt,
 int memcpy_toiovec(struct iovec *orig_iov, int iov_cnt, unsigned char *kdata, int len, size_t offset)
 {
   struct iovec *iov = orig_iov;
-  int this_iov_remaining_len = iov->iov_len;
-  void* this_iov_base = iov->iov_base;
+  //int this_iov_remaining_len = iov->iov_len;
+  //void* this_iov_base = iov->iov_base;
   int used_iovs = 0;
 
 	while (len > 0) {
-		if (this_iov_remaining_len) {
-			int copy = min_t(unsigned int, len, this_iov_remaining_len);
+		if (iov->iov_len) {
+			int copy = min_t(unsigned int, len, iov->iov_len);
       if (offset != 0) {
         copy = min_t(unsigned int, copy, offset);
         // If offset is < copy we only want to shift up to offset becoming 0
       }
 
       if (offset == 0) {
-        memcpy(this_iov_base, kdata, copy); // Clobber up to "remaining_len" with our data. Remaining_len is
+        memcpy(iov->iov_base, kdata, copy); // Clobber up to "remaining_len" with our data. Remaining_len is
                                             // the length left to clobber in this IOV, not available bytes after
 
         // Update output state (bytes remain, output buffer pointer)
@@ -864,19 +864,19 @@ int memcpy_toiovec(struct iovec *orig_iov, int iov_cnt, unsigned char *kdata, in
       }
 
       // Update stats about the current iov
-			this_iov_base += copy;
-			this_iov_remaining_len -= copy;
+			iov->iov_base += copy;
+			iov->iov_len -= copy;
 
-      if (len == 0 && this_iov_remaining_len) {
-        memset(this_iov_base, 0, this_iov_remaining_len); // Zero everything in this IOV after our payload
+      if (len == 0 && iov->iov_len) {
+        memset(iov->iov_base, 0, iov->iov_len); // Zero everything in this IOV after our payload
       }
 		}
 
     // Now we advance to the next IOV
     if (used_iovs < iov_cnt) {
       iov++;
-      this_iov_remaining_len = iov->iov_len;
-      this_iov_base = iov->iov_base;
+      iov->iov_len = iov->iov_len;
+      iov->iov_base = iov->iov_base;
     } else {
       printk(KERN_EMERG "FATAL M2IOV out of IOVs after using %d\n", used_iovs);
     }
@@ -943,10 +943,10 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
 
   // XXX HACK - if we get MSG_DONTWAIT (i.e., non-blocking socket) disable it.
   // This might(?) help with snapshotting but WILL break some things...
-  if (flags == 0x40) {
-    flags = 0; // Now it should wait. This is bad, just for testing
-    msg->msg_flags = flags;
-  }
+  //if (flags == 0x40) {
+  //  flags = 0; // Now it should wait. This is bad, just for testing
+  //  msg->msg_flags = flags;
+  //}
 
   int rv = sock->ops->recvmsg(sock, msg, msg_data_left(msg), flags);
   // This is where we hook all the various recv's that sockets can do. I believe
@@ -972,7 +972,7 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
 
   // Read iovec into a buffer
   memcpy_fromiovec(buf, &og_iov, buf_sz, 0);
-  printk(KERN_EMERG "<INPUT BUFFER %d vs %d with flags %x>%s</INPUT BUFFER>\n", buf_sz, rv, flags, buf);
+  //printk(KERN_EMERG "<INPUT BUFFER %d vs %d with flags %x>%s</INPUT BUFFER>\n", buf_sz, rv, flags, buf);
 
   // HYPERCALLs with buffer size and contents
   igloo_hypercall(1054, (uint32_t)buf_sz);
@@ -989,19 +989,37 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
   }
 
   // Plugin wants to modify: get new buffer and put it into our iovec
-  uint32_t new_buf_sz = -1;
+  volatile uint32_t new_buf_sz = -1;
   //printk(KERN_EMERG "[WSF socket] plugin wants to modify the buffer!\n");
 
   // Get new buffer in buf
-  while (new_buf_sz == -1) {
+  do {
     // Retry in a loop to help with snapshotting right here
     igloo_hypercall(1057, &new_buf_sz);
-    printk(KERN_EMERG "HC 1057 got %d\n", new_buf_sz);
-  }
-  igloo_hypercall(1058, (uint32_t)buf);
+  } while (new_buf_sz == -1);
 
-  //size_t orig_iov_count = iov_iter_npages(&msg->msg_iter, 10); // was 2nd arg before
-  memcpy_toiovec(&og_iov, og_iov.iov_len, buf, new_buf_sz, 0);
+  //printk(KERN_EMERG "foo\n");
+  // XXX THIS PRINT IS CRITICAL...
+
+  //printk(KERN_EMERG "HC 1057 (get_size) got result: %d\n", new_buf_sz);
+  //__sync_synchronize();
+  //if ((volatile uint32_t)have_modifications == 0) asm volatile("nop");
+  //__sync_synchronize();
+  //if (new_buf_sz == 1025) {
+  //  printk(KERN_EMERG "good enough: %d\n", new_buf_sz);
+  //}
+
+  if (new_buf_sz == buf_sz) {
+    printk(KERN_EMERG "Just took snapshot\n");
+  } else {
+    igloo_hypercall(1058, (volatile uint32_t)buf);
+    printk(KERN_EMERG "Modified buffer is %d bytes: %s\n", new_buf_sz, buf);
+
+    //size_t orig_iov_count = iov_iter_npages(&msg->msg_iter, 10); // was 2nd arg before
+    memcpy_toiovec(&og_iov, og_iov.iov_len, buf, new_buf_sz, 0);
+    // TODO: if new message length != old will we have issues?
+    rv = new_buf_sz;
+  }
 
 done_free:
   kfree(buf);
