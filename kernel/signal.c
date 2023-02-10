@@ -3518,8 +3518,8 @@ SYSCALL_DEFINE2(signal, int, sig, __sighandler_t, handler)
 
 SYSCALL_DEFINE0(pause)
 {
-  igloo_hypercall(1000 + 80 + 1, (uint32_t)task_pid_nr(current));
-  igloo_hypercall(1000 + 80 + 2, (uint32_t)task_tgid_nr(current));
+  igloo_hypercall(1081, (uint32_t)task_pid_nr(current));
+  igloo_hypercall(1082, (uint32_t)task_tgid_nr(current));
 
 	while (!signal_pending(current)) {
 		__set_current_state(TASK_INTERRUPTIBLE);
@@ -3532,8 +3532,8 @@ SYSCALL_DEFINE0(pause)
 
 static int sigsuspend(sigset_t *set)
 {
-  igloo_hypercall(1000 + 80 + 1, (uint32_t)task_pid_nr(current));
-  igloo_hypercall(1000 + 80 + 2, (uint32_t)task_tgid_nr(current));
+  igloo_hypercall(1081, (uint32_t)task_pid_nr(current));
+  igloo_hypercall(1082, (uint32_t)task_tgid_nr(current));
 
 	current->saved_sigmask = current->blocked;
 	set_current_blocked(set);

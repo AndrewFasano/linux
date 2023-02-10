@@ -462,9 +462,9 @@ int do_select(int n, fd_set_bits *fds, struct timespec64 *end_time)
           int _err = 0;
           sock = sock_from_file(f.file, &_err);
           if (sock) {
-              igloo_hypercall(1000 + 31 + 1, (uint32_t)task_pid_nr(current));
-              igloo_hypercall(1000 + 32 + 2, (uint32_t)task_tgid_nr(current));
-              igloo_hypercall(1000 + 33 + 3, (uint32_t)f.file);
+              igloo_hypercall(1032, (uint32_t)task_pid_nr(current));
+              igloo_hypercall(1034, (uint32_t)task_tgid_nr(current));
+              igloo_hypercall(1036, (uint32_t)f.file);
           }
 
 					const struct file_operations *f_op;

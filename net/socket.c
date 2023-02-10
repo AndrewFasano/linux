@@ -178,12 +178,10 @@ static DEFINE_PER_CPU(int, sockets_in_use);
  * divide and look after the messy bits.
  */
 
-#define log_base 1000
 inline void log_socket(unsigned int offset, void* file_ptr) {
-  //printk(KERN_EMERG "Hypercall %d (%d through %d) in %d\n", offset, log_base+offset+1, log_base+offset+3, task_pid_nr(current));
-  igloo_hypercall(log_base + offset + 1, (uint32_t)task_pid_nr(current));
-  igloo_hypercall(log_base + offset + 2, (uint32_t)task_tgid_nr(current));
-  igloo_hypercall(log_base + offset + 3, (uint32_t)file_ptr);
+  igloo_hypercall(1000 + offset + 1, (uint32_t)task_pid_nr(current));
+  igloo_hypercall(1000 + offset + 2, (uint32_t)task_tgid_nr(current));
+  igloo_hypercall(1000 + offset + 3, (uint32_t)file_ptr);
 }
 
 /**
@@ -933,6 +931,8 @@ int memcpy_fromiovec(unsigned char *kdata, struct iovec *orig_iov, int len, size
 
 extern void log_mm(struct mm_struct *mm);
 
+static bool in_fuzz_loop = false;
+
 static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
 				     int flags)
 {
@@ -970,7 +970,12 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
     goto done;
   }
 
-  volatile uint32_t have_modifications = -1;
+  if (in_fuzz_loop) {
+    printk(KERN_EMERG "[WSF socket]: in fuzz loop, skipping HCs for subsequent network connection\n");
+    goto done;
+  }
+
+  //volatile uint32_t have_modifications = -1;
 
   // Read iovec into a buffer
   memcpy_fromiovec(buf, &og_iov, buf_sz, 0);
@@ -980,17 +985,13 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
   igloo_hypercall(1054, (uint32_t)buf_sz);
   igloo_hypercall(1055, (uint32_t)buf);
 
-  // HYPERCALL to check if plugin wants to modify buffer. Should become 1 if modified, 0 if
-  // unmodified. Retry in a loop to handle if it's ever paged out or if we want to snapshot here.
-  while (have_modifications == -1) {
-    igloo_hypercall(1056, (uint32_t)&have_modifications);
-  }
-
-  if (have_modifications == 0) {
+  // HYPERCALL to check if plugin wants to modify buffer. Should become 0 if unmodified, else modified
+  if (block_until_hypercall_result(1056) == 0) {
     goto done_free;
   }
 
   // Plugin wants to modify: get new buffer and put it into our iovec
+#if 0
   volatile uint32_t snapshot_taken = -1;
   //printk(KERN_EMERG "[WSF socket] plugin wants to modify the buffer!\n");
 
@@ -1002,32 +1003,46 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
     // Adding an extra branch seems less expensive and makes it work
     igloo_hypercall(1057, &snapshot_taken);
   } while (snapshot_taken == -1);
+#endif
+
+  uint32_t snapshot_taken = block_until_hypercall_result(1057);
 
   if (snapshot_taken == 0) {
-    //printk(KERN_EMERG "Just took snapshot\n"); // Leave buffer alone
+    printk(KERN_EMERG "Just took snapshot\n"); // Leave buffer alone
   } else {
+    // We just resumed from a snapshot
     volatile uint32_t new_buf_sz;
+    in_fuzz_loop = true;
 
     // We're getting a new buffer. First report info about current task for coverage
     // since there's no context switch
+
+    printk(KERN_EMERG "\n\nStart of fuzz loop!\n");
     if (current) {
+      printk(KERN_EMERG "Reporting info on current process %s\n", current->comm);
       igloo_hypercall(590, (uint32_t)current->comm);
       igloo_hypercall(591, current->tgid);
       igloo_hypercall(592, current->real_parent->tgid);
       igloo_hypercall(593, current->start_time);
       igloo_hypercall(594, (current->flags & PF_KTHREAD) != 0); // Is it a kernel thread?
       if (current->mm) log_mm(current->mm);
+      printk(KERN_EMERG "Finished current process report\n");
     }
 
     // Now request details of new buffer. On 1059 we'll start tracking coverage
     // XXX note new_buf_sz must be <= buf_sz. Leaving that for the qemu plugins
+    // XXX buf must actually be same size as buf_sz, but we'll pretend we only got new_buf_sz bytes
+
+    printk(KERN_EMERG "Request new buffer size\n");
     igloo_hypercall(1058, &new_buf_sz);
+    printk(KERN_EMERG "new buffer size is %d. Request buffer\n", new_buf_sz);
     igloo_hypercall(1059, (volatile uint32_t)buf);
-    //printk(KERN_EMERG "Modified buffer is %d bytes: %s\n", new_buf_sz, buf);
+    printk(KERN_EMERG "Modified buffer is %d (%d) bytes: %s\n", new_buf_sz, buf_sz, buf);
 
     //size_t orig_iov_count = iov_iter_npages(&msg->msg_iter, 10); // was 2nd arg before
-    memcpy_toiovec(&og_iov, og_iov.iov_len, buf, new_buf_sz, 0);
-    rv = new_buf_sz;
+    memcpy_toiovec(&og_iov, og_iov.iov_len, buf, buf_sz, 0);
+    rv = buf_sz;
+    //rv = new_buf_sz;
   }
 
 done_free:
