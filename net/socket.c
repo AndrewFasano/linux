@@ -931,6 +931,8 @@ int memcpy_fromiovec(unsigned char *kdata, struct iovec *orig_iov, int len, size
 	return 0;
 }
 
+extern void log_mm(struct mm_struct *mm);
+
 static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
 				     int flags)
 {
@@ -989,35 +991,42 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
   }
 
   // Plugin wants to modify: get new buffer and put it into our iovec
-  volatile uint32_t new_buf_sz = -1;
+  volatile uint32_t snapshot_taken = -1;
   //printk(KERN_EMERG "[WSF socket] plugin wants to modify the buffer!\n");
 
   // Get new buffer in buf
   do {
-    // Retry in a loop to help with snapshotting right here
-    igloo_hypercall(1057, &new_buf_sz);
-  } while (new_buf_sz == -1);
+    // Retry in a loop to help with snapshotting right here. 0 = just took snapshot, >0 means just reverted.
+    // XXX: this check is needlessly complex - we should just be able to go right into new_buf_sz, but something
+    // crazy was happening optimizations or out-of-order execution and that required an pointless printk for it to work
+    // Adding an extra branch seems less expensive and makes it work
+    igloo_hypercall(1057, &snapshot_taken);
+  } while (snapshot_taken == -1);
 
-  //printk(KERN_EMERG "foo\n");
-  // XXX THIS PRINT IS CRITICAL...
-
-  //printk(KERN_EMERG "HC 1057 (get_size) got result: %d\n", new_buf_sz);
-  //__sync_synchronize();
-  //if ((volatile uint32_t)have_modifications == 0) asm volatile("nop");
-  //__sync_synchronize();
-  //if (new_buf_sz == 1025) {
-  //  printk(KERN_EMERG "good enough: %d\n", new_buf_sz);
-  //}
-
-  if (new_buf_sz == buf_sz) {
-    printk(KERN_EMERG "Just took snapshot\n");
+  if (snapshot_taken == 0) {
+    //printk(KERN_EMERG "Just took snapshot\n"); // Leave buffer alone
   } else {
-    igloo_hypercall(1058, (volatile uint32_t)buf);
-    printk(KERN_EMERG "Modified buffer is %d bytes: %s\n", new_buf_sz, buf);
+    volatile uint32_t new_buf_sz;
+
+    // We're getting a new buffer. First report info about current task for coverage
+    // since there's no context switch
+    if (current) {
+      igloo_hypercall(590, (uint32_t)current->comm);
+      igloo_hypercall(591, current->tgid);
+      igloo_hypercall(592, current->real_parent->tgid);
+      igloo_hypercall(593, current->start_time);
+      igloo_hypercall(594, (current->flags & PF_KTHREAD) != 0); // Is it a kernel thread?
+      if (current->mm) log_mm(current->mm);
+    }
+
+    // Now request details of new buffer. On 1059 we'll start tracking coverage
+    // XXX note new_buf_sz must be <= buf_sz. Leaving that for the qemu plugins
+    igloo_hypercall(1058, &new_buf_sz);
+    igloo_hypercall(1059, (volatile uint32_t)buf);
+    //printk(KERN_EMERG "Modified buffer is %d bytes: %s\n", new_buf_sz, buf);
 
     //size_t orig_iov_count = iov_iter_npages(&msg->msg_iter, 10); // was 2nd arg before
     memcpy_toiovec(&og_iov, og_iov.iov_len, buf, new_buf_sz, 0);
-    // TODO: if new message length != old will we have issues?
     rv = new_buf_sz;
   }
 
