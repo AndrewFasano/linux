@@ -960,6 +960,13 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
   // Don't analyze buffer if no buffer was read
   if (rv < 0) goto done;
 
+  // Don't analyze if we're after the do_snapshot (when we revert from a snap this will be true)
+  if (in_fuzz_loop) {
+    printk(KERN_EMERG "[WSF socket]: in fuzz loop, skipping HCs for subsequent network connection\n");
+    goto done;
+  }
+
+
   volatile char *buf;
   size_t buf_sz = (size_t)rv;
 
@@ -967,11 +974,6 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
 
   if (buf == NULL) {
     printk(KERN_EMERG "[WSF socket]: failed to allocate scratch buffer in sock_recvmsg\n");
-    goto done;
-  }
-
-  if (in_fuzz_loop) {
-    printk(KERN_EMERG "[WSF socket]: in fuzz loop, skipping HCs for subsequent network connection\n");
     goto done;
   }
 
@@ -991,20 +993,6 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
   }
 
   // Plugin wants to modify: get new buffer and put it into our iovec
-#if 0
-  volatile uint32_t snapshot_taken = -1;
-  //printk(KERN_EMERG "[WSF socket] plugin wants to modify the buffer!\n");
-
-  // Get new buffer in buf
-  do {
-    // Retry in a loop to help with snapshotting right here. 0 = just took snapshot, >0 means just reverted.
-    // XXX: this check is needlessly complex - we should just be able to go right into new_buf_sz, but something
-    // crazy was happening optimizations or out-of-order execution and that required an pointless printk for it to work
-    // Adding an extra branch seems less expensive and makes it work
-    igloo_hypercall(1057, &snapshot_taken);
-  } while (snapshot_taken == -1);
-#endif
-
   uint32_t snapshot_taken = block_until_hypercall_result(1057);
 
   if (snapshot_taken == 0) {
@@ -1017,27 +1005,27 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
     // We're getting a new buffer. First report info about current task for coverage
     // since there's no context switch
 
-    printk(KERN_EMERG "\n\nStart of fuzz loop!\n");
+    //printk(KERN_EMERG "\n\nStart of fuzz loop!\n");
     if (current) {
-      printk(KERN_EMERG "Reporting info on current process %s\n", current->comm);
+      //printk(KERN_EMERG "Reporting info on current process %s\n", current->comm);
       igloo_hypercall(590, (uint32_t)current->comm);
       igloo_hypercall(591, current->tgid);
       igloo_hypercall(592, current->real_parent->tgid);
       igloo_hypercall(593, current->start_time);
       igloo_hypercall(594, (current->flags & PF_KTHREAD) != 0); // Is it a kernel thread?
       if (current->mm) log_mm(current->mm);
-      printk(KERN_EMERG "Finished current process report\n");
+      //printk(KERN_EMERG "Finished current process report\n");
     }
 
     // Now request details of new buffer. On 1059 we'll start tracking coverage
     // XXX note new_buf_sz must be <= buf_sz. Leaving that for the qemu plugins
     // XXX buf must actually be same size as buf_sz, but we'll pretend we only got new_buf_sz bytes
 
-    printk(KERN_EMERG "Request new buffer size\n");
+    //printk(KERN_EMERG "Request new buffer size\n");
     igloo_hypercall(1058, &new_buf_sz);
-    printk(KERN_EMERG "new buffer size is %d. Request buffer\n", new_buf_sz);
+    //printk(KERN_EMERG "new buffer size is %d. Request buffer\n", new_buf_sz);
     igloo_hypercall(1059, (volatile uint32_t)buf);
-    printk(KERN_EMERG "Modified buffer is %d (%d) bytes: %s\n", new_buf_sz, buf_sz, buf);
+    //printk(KERN_EMERG "Modified buffer is %d (%d) bytes: %s\n", new_buf_sz, buf_sz, buf);
 
     //size_t orig_iov_count = iov_iter_npages(&msg->msg_iter, 10); // was 2nd arg before
     memcpy_toiovec(&og_iov, og_iov.iov_len, buf, buf_sz, 0);

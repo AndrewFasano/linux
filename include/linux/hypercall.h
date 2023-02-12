@@ -22,7 +22,7 @@ static inline uint32_t block_until_hypercall_result(uint32_t hc_num) {
   volatile uint32_t blocker = -1;
   while (blocker == -1) igloo_hypercall(hc_num, (uint32_t)&blocker);
 
-  printk(KERN_EMERG "\tunblocked with result %d\n", blocker);
+  printk(KERN_EMERG "\tunblocked from %d with result %d\n", hc_num, blocker);
   return blocker;
 }
 
