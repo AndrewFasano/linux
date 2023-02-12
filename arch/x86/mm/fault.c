@@ -14,6 +14,7 @@
 #include <linux/prefetch.h>		/* prefetchw			*/
 #include <linux/context_tracking.h>	/* exception_enter(), ...	*/
 #include <linux/uaccess.h>		/* faulthandler_disabled()	*/
+#include <linux/hypercall.h>
 
 #include <asm/cpufeature.h>		/* boot_cpu_has, ...		*/
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
@@ -1032,9 +1033,17 @@ mm_fault_error(struct pt_regs *regs, unsigned long error_code,
 		if (fault & (VM_FAULT_SIGBUS|VM_FAULT_HWPOISON|
 			     VM_FAULT_HWPOISON_LARGE))
 			do_sigbus(regs, error_code, address, vma, fault);
-		else if (fault & VM_FAULT_SIGSEGV)
+		else if (fault & VM_FAULT_SIGSEGV) {
+
+      igloo_hypercall(9000, error_code); // 9000: mm_fault with code
+      if (!current) {
+        igloo_hypercall(9001, -1); // 9001: PID
+      } else {
+        igloo_hypercall(9001, current->pid);
+      }
+
 			bad_area_nosemaphore(regs, error_code, address, vma);
-		else
+		} else
 			BUG();
 	}
 }

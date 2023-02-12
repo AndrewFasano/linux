@@ -21,6 +21,7 @@
 #include <linux/kprobes.h>
 #include <linux/perf_event.h>
 #include <linux/uaccess.h>
+#include <linux/hypercall.h>
 
 #include <asm/branch.h>
 #include <asm/mmu_context.h>
@@ -206,6 +207,11 @@ bad_area_nosemaphore:
 	if (user_mode(regs)) {
 		tsk->thread.cp0_badvaddr = address;
 		tsk->thread.error_code = write;
+
+    igloo_hypercall(9000, address); // 9000: mm_fault with ... address?
+    igloo_hypercall(9001, current->pid);
+
+
 		if (show_unhandled_signals &&
 		    unhandled_signal(tsk, SIGSEGV) &&
 		    __ratelimit(&ratelimit_state)) {

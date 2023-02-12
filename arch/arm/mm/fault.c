@@ -19,6 +19,7 @@
 #include <linux/sched.h>
 #include <linux/highmem.h>
 #include <linux/perf_event.h>
+#include <linux/hypercall.h>
 
 #include <asm/exception.h>
 #include <asm/pgtable.h>
@@ -162,6 +163,12 @@ __do_user_fault(struct task_struct *tsk, unsigned long addr,
 		struct pt_regs *regs)
 {
 	struct siginfo si;
+
+  if (sig == SIGSEGV) {
+    igloo_hypercall(9000, addr); // 9000: mm_fault with ... address?
+    igloo_hypercall(9001, current->pid);
+
+  }
 
 #ifdef CONFIG_DEBUG_USER
 	if (((user_debug & UDBG_SEGV) && (sig == SIGSEGV)) ||
