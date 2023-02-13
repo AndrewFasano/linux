@@ -1670,7 +1670,7 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 	if (flags & MSG_PEEK) {
 		peek_seq = tp->copied_seq;
 		seq = &peek_seq;
-    igloo_hypercall(1059, 1); // It's a MSG_PEEK
+    //igloo_hypercall(1059, 1); // It's a MSG_PEEK
 	}
 
 	target = sock_rcvlowat(sk, flags & MSG_WAITALL, len);
