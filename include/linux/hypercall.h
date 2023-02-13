@@ -19,10 +19,14 @@ static inline void igloo_hypercall(uint32_t num, uint32_t a1) {
 // Block until target_ptr contains a value that isn't 01
 static inline uint32_t block_until_hypercall_result(uint32_t hc_num) {
   volatile uint32_t blocker = -1;
-  printk(KERN_EMERG "Blocking until HC result %d\n", hc_num);
-  while (blocker == -1) igloo_hypercall(hc_num, (uint32_t)&blocker);
-
-  printk(KERN_EMERG "\tunblocked from %d with result %d\n", hc_num, blocker);
+  int loopc;
+  for (loopc = 0; loopc < 1000 && blocker == -1; loopc++) {
+      igloo_hypercall(hc_num, (uint32_t)&blocker);
+      if (loopc == 9999 && blocker == -1) {
+        printk(KERN_EMERG "ERROR: block_until_hypercall_result failed to get result for HC %d\n", hc_num);
+        panic("Unable to get result for blocking hypercall after 999 tries");
+      }
+  }
   return blocker;
 }
 
