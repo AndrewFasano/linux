@@ -469,6 +469,8 @@ int oops_may_print(void)
  */
 void oops_enter(void)
 {
+  igloo_hypercall(9999, 0); // 9999: kernel panic
+
 	tracing_off();
 	/* can't trust the integrity of the kernel anymore: */
 	debug_locks_off();
