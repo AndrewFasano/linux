@@ -988,7 +988,9 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
   igloo_hypercall(1055, (uint32_t)buf);
 
   // HYPERCALL to check if plugin wants to modify buffer. Should become 0 if unmodified, else modified
-  if (block_until_hypercall_result(1056) == 0) {
+  if (!USE_IGLOO_VPN_HYPERCALLS || block_until_hypercall_result(1056) == 0) {
+    // If not using hypercalls for VPN we'll skip the blocking calls and
+    // // all the hypercalls to allow buffer modifications
     goto done_free;
   }
 

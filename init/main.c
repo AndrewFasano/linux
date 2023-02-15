@@ -82,6 +82,7 @@
 #include <linux/proc_ns.h>
 #include <linux/io.h>
 #include <linux/cache.h>
+#include <linux/hypercall.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -165,6 +166,24 @@ static int __init set_no_fd_nvram(char *str)
 }
 
 __setup("NO_FD_NVRAM", set_no_fd_nvram);
+
+static int __init set_igloo_vpn_hypercall(char *str)
+{
+  USE_IGLOO_VPN_HYPERCALLS = true;
+  printk(KERN_INFO "Enabled IGLOO VPN hypercalls\n");
+  return 1;
+}
+
+__setup("VPNHC", set_igloo_vpn_hypercall);
+
+static int __init set_igloo_hypercall(char *str)
+{
+  USE_IGLOO_HYPERCALLS = true;
+  printk(KERN_INFO "Enabled IGLOO hypercalls\n");
+  return 1;
+}
+
+__setup("IGLOOHC", set_igloo_hypercall);
 
 static const char *argv_init[MAX_INIT_ARGS+2] = { "init", NULL, };
 static const char *panic_later, *panic_param;
