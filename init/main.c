@@ -167,10 +167,13 @@ static int __init set_no_fd_nvram(char *str)
 
 __setup("NO_FD_NVRAM", set_no_fd_nvram);
 
+bool USE_IGLOO_HYPERCALLS = false; // Should we report system state via HCs?
+bool USE_IGLOO_VPN_HYPERCALLS = false; // Can we *block* on HCs while waiting for the VPN?
+
 static int __init set_igloo_vpn_hypercall(char *str)
 {
   USE_IGLOO_VPN_HYPERCALLS = true;
-  printk(KERN_INFO "Enabled IGLOO VPN hypercalls\n");
+  printk(KERN_EMERG "Enabled IGLOO VPN hypercalls\n");
   return 1;
 }
 
@@ -179,7 +182,7 @@ __setup("VPNHC", set_igloo_vpn_hypercall);
 static int __init set_igloo_hypercall(char *str)
 {
   USE_IGLOO_HYPERCALLS = true;
-  printk(KERN_INFO "Enabled IGLOO hypercalls\n");
+  printk(KERN_EMERG "Enabled IGLOO hypercalls: %d\n", USE_IGLOO_HYPERCALLS);
   return 1;
 }
 

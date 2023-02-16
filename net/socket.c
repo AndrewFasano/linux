@@ -1720,11 +1720,14 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 
 				//printk(KERN_EMERG "Process %d (tgid %d) binds socket %x\n", task_pid_nr(current), task_tgid_nr(current),
         //       (uint32_t)sock->file);
-
 				log_socket(10, (uint32_t)sock->file);
+
+        // Inside bind call we'll do 1015: ip address as string and 1016: assigned port.
+        // Unless it's not ipv4/6, then we'll do neither
 				err = sock->ops->bind(sock,
 						      (struct sockaddr *)
 						      &address, addrlen);
+          igloo_hypercall(1019, 0); // All done
       }
 		}
 		fput_light(sock->file, fput_needed);

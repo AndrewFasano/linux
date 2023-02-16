@@ -409,12 +409,16 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	inet->inet_dport = 0;
 	inet->inet_daddr = 0;
 
-	// Network hypercalls: PID, family, ip, port, proto.
-	igloo_hypercall(5930, task_pid_nr(current)); // Current PID (not sending procname, that's just current->comm if we do want)
-	igloo_hypercall(5931, sock->type==SOCK_STREAM ? 0 : sock->type==SOCK_DGRAM ? 1 : 2 ); // Type: 0=SOCK_STREAM, 1=SOCK_DGRAM, 2=other
+	// inet-specific hypercalls (with sock->sk) that we can't easily run from socket.c
+  //1014: socket family 0=AF_INET, 1=AF_INET6, 2 = other
+  igloo_hypercall(1014, sk->sk_family == AF_INET ? 0 : (sk->sk_family == AF_INET6 ? 1 : 2));
+  //1015: 0=Stream, 1=dgram, 2=other
+  igloo_hypercall(1015, (sock->type == SOCK_STREAM ? 0 : sock->type == SOCK_DGRAM ? 1 : 2));
+
 	snprintf(ipbuf, 64, "%pI6", &addr->sin6_addr);
-	igloo_hypercall(5933, (uint32_t)&ipbuf); // 5932 = ipv4 addr, 5933 = ipv6 addr
-	igloo_hypercall(5934, snum); // port (not flipped)
+	igloo_hypercall(1016, (uint32_t)&ipbuf); // 5932 = ipv4 addr, 5933 = ipv6 addr
+  // We use 1016 to indicate actual port requested vs 1017 for requested 0 but got X
+  igloo_hypercall(snum ? 1017 : 1018, inet_sk(sk)->inet_num);
 
 
 out:

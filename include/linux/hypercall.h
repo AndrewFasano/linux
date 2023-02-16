@@ -3,13 +3,16 @@
 
 #include <linux/kernel.h> // for panic
 
-static bool USE_IGLOO_HYPERCALLS = false; // Should we report system state via HCs?
-static bool USE_IGLOO_VPN_HYPERCALLS = false; // Can we *block* on HCs while waiting for the VPN?
+extern bool USE_IGLOO_HYPERCALLS; // Should we report system state via HCs?
+extern bool USE_IGLOO_VPN_HYPERCALLS; // Can we *block* on HCs while waiting for the VPN?
 
 //static bool is_replay = false;
 
 static inline void igloo_hypercall(uint32_t num, uint32_t a1) {
-  if (!USE_IGLOO_HYPERCALLS) return;
+  if (!USE_IGLOO_HYPERCALLS) {
+    printk(KERN_EMERG "Ignoring hypercall %d UIH is %d\n", num, USE_IGLOO_HYPERCALLS);
+    return;
+  }
 
 #ifdef CONFIG_MIPS
   //if (is_replay) printk(KERN_EMERG "Igloo hypercall %d arg %x\n", num, a1);
