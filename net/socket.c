@@ -580,6 +580,8 @@ struct socket *sock_alloc(void)
 
 	sock = SOCKET_I(inode);
 
+  log_socket(90, sock->file);
+
 	kmemcheck_annotate_bitfield(sock, type);
 	inode->i_ino = get_next_ino();
 	inode->i_mode = S_IFSOCK | S_IRWXUGO;
@@ -603,8 +605,14 @@ EXPORT_SYMBOL(sock_alloc);
 
 void sock_release(struct socket *sock)
 {
+  uint32_t old_file = NULL;
 	if (sock->ops) {
 		struct module *owner = sock->ops->owner;
+
+    if (sock->file) {
+      //log_socket(80, (uint32_t)sock->file); // Not sure about this...
+      old_file = (uint32_t)sock->file; // This can be freed by the call to release
+    }
 
 		sock->ops->release(sock);
 		sock->ops = NULL;
@@ -616,6 +624,13 @@ void sock_release(struct socket *sock)
 
 	this_cpu_sub(sockets_in_use, 1);
 	if (!sock->file) {
+    if (old_file) {
+      log_socket(80, old_file);
+    }
+    //if (atomic_read(&SOCK_INODE(sock)->i_count) == 1) {
+      // Refcount was 1 and we're about to decrement it, it's gonna be freed!
+      //log_socket(80, (uint32_t)sock->file); /// uh probs too often!
+    //}
 		iput(SOCK_INODE(sock));
 		return;
 	}
@@ -950,15 +965,28 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
   //  msg->msg_flags = flags;
   //}
 
+  // Log that we're *about to* recv
+	log_socket(50, (uint32_t)sock->file);
+  igloo_hypercall(1050, (uint32_t)0); // 0 indicates pre-recv
+
+  // This can block, right?
   int rv = sock->ops->recvmsg(sock, msg, msg_data_left(msg), flags);
+
   // This is where we hook all the various recv's that sockets can do. I believe
   // this function is used for everything we care about
   // Allocate a flat buffer big enough to hold the union of all the IOVs message
   // XXX ops->recvmsg *POPULATES* the IOV
   // XXX rv is number of bytes recv'd! Where'd they go? Into the iovec?
 
+	log_socket(50, (uint32_t)sock->file); // We want 1054 and friends to come after this.
+                                        // Seems like we need to call this again? Unless
+                                        // read iter is always called by recvmsg?
+
   // Don't analyze buffer if no buffer was read
-  if (rv < 0) goto done;
+  if (rv < 0) {
+    igloo_hypercall(1050, (uint32_t)(-1*rv)); // > 0 indicates post-recv+err
+    goto done;
+  }
 
   // Don't analyze if we're after the do_snapshot (when we revert from a snap this will be true)
   if (in_fuzz_loop) {
@@ -1113,7 +1141,7 @@ static ssize_t sock_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	struct msghdr msg = {.msg_iter = *to,
 			     .msg_iocb = iocb};
 	ssize_t res;
-  char buf[1024];
+  //char buf[1024];
 
 	if (file->f_flags & O_NONBLOCK)
 		msg.msg_flags = MSG_DONTWAIT;
@@ -1337,14 +1365,12 @@ static unsigned int sock_poll(struct file *file, poll_table *wait)
 {
 	unsigned int busy_flag = 0;
 	struct socket *sock;
+  int poll_result;
 
 	/*
 	 *      We can't return errors to poll, so it's either yes or no.
 	 */
 	sock = file->private_data;
-
-	//printk(KERN_EMERG "Process %d (tgid %d) polls on socket at %p\n", task_pid_nr(current), task_tgid_nr(current), file);
-	log_socket(30, (uint32_t)file);
 
 	if (sk_can_busy_loop(sock->sk)) {
 		/* this socket can poll_ll so tell the system call */
@@ -1355,7 +1381,13 @@ static unsigned int sock_poll(struct file *file, poll_table *wait)
 			sk_busy_loop(sock->sk, 1);
 	}
 
-	return busy_flag | sock->ops->poll(file, sock, wait);
+  poll_result = sock->ops->poll(file, sock, wait);
+
+	//printk(KERN_EMERG "Process %d (tgid %d) polls on socket at %p\n", task_pid_nr(current), task_tgid_nr(current), file);
+	//log_socket(30, (uint32_t)file);
+  //igloo_hypercall(1034, (uint32_t)poll_result); // XXX why is 0x172 our "no results" result?
+
+	return busy_flag | poll_result;
 }
 
 static int sock_mmap(struct file *file, struct vm_area_struct *vma)
@@ -1827,10 +1859,6 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	if (err)
 		goto out_fd;
 
-  //printk(KERN_EMERG "Process %d (tgid %d) accepts on socket at %p and gets new socket %p\n", task_pid_nr(current), task_tgid_nr(current), sock->file, newsock->file);
-  log_socket(40, (uint32_t)sock->file);
-  igloo_hypercall(1044, (uint32_t)newsock->file);
-
 	err = sock->ops->accept(sock, newsock, sock->file->f_flags);
 	if (err < 0)
 		goto out_fd;
@@ -1851,6 +1879,10 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 
 	fd_install(newfd, newfile);
 	err = newfd;
+
+  //printk(KERN_EMERG "Process %d (tgid %d) accepts on socket at %p and gets new socket %p\n", task_pid_nr(current), task_tgid_nr(current), sock->file, newsock->file);
+  log_socket(40, (uint32_t)sock->file);
+  igloo_hypercall(1044, (uint32_t)newsock->file);
 
 out_put:
 	fput_light(sock->file, fput_needed);

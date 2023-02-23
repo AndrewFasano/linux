@@ -177,7 +177,7 @@ static int __init set_igloo_vpn_hypercall(char *str)
   return 1;
 }
 
-__setup("VPNHC", set_igloo_vpn_hypercall);
+__setup("BLOCKINGHC", set_igloo_vpn_hypercall);
 
 static int __init set_igloo_hypercall(char *str)
 {
