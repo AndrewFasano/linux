@@ -436,6 +436,10 @@ struct file *sock_alloc_file(struct socket *sock, int flags, const char *dname)
 	sock->file = file;
 	file->f_flags = O_RDWR | (flags & O_NONBLOCK);
 	file->private_data = sock;
+
+  // Just allocated a socket with an FD, let's record it
+  log_socket(90, sock->file);
+
 	return file;
 }
 EXPORT_SYMBOL(sock_alloc_file);
@@ -580,8 +584,6 @@ struct socket *sock_alloc(void)
 
 	sock = SOCKET_I(inode);
 
-  log_socket(90, sock->file);
-
 	kmemcheck_annotate_bitfield(sock, type);
 	inode->i_ino = get_next_ino();
 	inode->i_mode = S_IFSOCK | S_IRWXUGO;
@@ -605,13 +607,13 @@ EXPORT_SYMBOL(sock_alloc);
 
 void sock_release(struct socket *sock)
 {
-  uint32_t old_file = NULL;
+  //uint32_t old_file = NULL;
 	if (sock->ops) {
 		struct module *owner = sock->ops->owner;
 
     if (sock->file) {
-      //log_socket(80, (uint32_t)sock->file); // Not sure about this...
-      old_file = (uint32_t)sock->file; // This can be freed by the call to release
+      log_socket(80, (uint32_t)sock->file); // Not sure about this...
+      //old_file = (uint32_t)sock->file; // This can be freed by the call to release
     }
 
 		sock->ops->release(sock);
@@ -624,9 +626,9 @@ void sock_release(struct socket *sock)
 
 	this_cpu_sub(sockets_in_use, 1);
 	if (!sock->file) {
-    if (old_file) {
-      log_socket(80, old_file);
-    }
+    //if (old_file) {
+    //  log_socket(80, old_file);
+    //}
     //if (atomic_read(&SOCK_INODE(sock)->i_count) == 1) {
       // Refcount was 1 and we're about to decrement it, it's gonna be freed!
       //log_socket(80, (uint32_t)sock->file); /// uh probs too often!
@@ -957,7 +959,7 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
   // Make a copy of the iovec that the output's going into *before* it gets updated with data
   struct iovec og_iov = { .iov_base = msg->msg_iter.iov->iov_base,  // __user pointer
                           .iov_len  = msg->msg_iter.iov->iov_len};
-
+  size_t buf_sz;
   // XXX HACK - if we get MSG_DONTWAIT (i.e., non-blocking socket) disable it.
   // This might(?) help with snapshotting but WILL break some things...
   //if (flags == 0x40) {
@@ -967,10 +969,11 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
 
   // Log that we're *about to* recv
 	log_socket(50, (uint32_t)sock->file);
-  igloo_hypercall(1050, (uint32_t)0); // 0 indicates pre-recv
+  igloo_hypercall(1150, (uint32_t)0); // 0 indicates pre-recv
 
   // This can block, right?
   int rv = sock->ops->recvmsg(sock, msg, msg_data_left(msg), flags);
+  buf_sz = (size_t)rv;
 
   // This is where we hook all the various recv's that sockets can do. I believe
   // this function is used for everything we care about
@@ -984,19 +987,19 @@ static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
 
   // Don't analyze buffer if no buffer was read
   if (rv < 0) {
-    igloo_hypercall(1050, (uint32_t)(-1*rv)); // > 0 indicates post-recv+err
+    igloo_hypercall(1151, (uint32_t)(-1*rv)); // 1151: error (non-negative)
     goto done;
   }
 
   // Don't analyze if we're after the do_snapshot (when we revert from a snap this will be true)
   if (in_fuzz_loop) {
     printk(KERN_EMERG "[WSF socket]: in fuzz loop, skipping HCs for subsequent network connection\n");
+    igloo_hypercall(1152, buf_sz); // 1152: bytes read, same as 1054 when in fuzz loop
     goto done;
   }
 
 
   volatile char *buf;
-  size_t buf_sz = (size_t)rv;
 
   buf = kmalloc(buf_sz, GFP_KERNEL); // XXX should we put a max on this?
 
@@ -1383,7 +1386,7 @@ static unsigned int sock_poll(struct file *file, poll_table *wait)
 
   poll_result = sock->ops->poll(file, sock, wait);
 
-	//printk(KERN_EMERG "Process %d (tgid %d) polls on socket at %p\n", task_pid_nr(current), task_tgid_nr(current), file);
+	//printk(KERN_EMERG "Process %d (tgid %d) hits sock_poll on socket at %p\n", task_pid_nr(current), task_tgid_nr(current), file);
 	//log_socket(30, (uint32_t)file);
   //igloo_hypercall(1034, (uint32_t)poll_result); // XXX why is 0x172 our "no results" result?
 
