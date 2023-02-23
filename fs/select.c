@@ -469,16 +469,18 @@ int do_select(int n, fd_set_bits *fds, struct timespec64 *end_time)
 					if (f_op->poll) {
 						wait_key_set(wait, in, out,
 							     bit, busy_flag);
+
+            // SELECT: Finish with 1035. 0 before, 2 after with data, 1 after with no data
+            igloo_hypercall(1031, (uint32_t)task_pid_nr(current));
+            igloo_hypercall(1032, (uint32_t)task_tgid_nr(current));
+            igloo_hypercall(1033, (uint32_t)f.file);
+            igloo_hypercall(1035, (uint32_t)0); // pre-select
 						mask = (*f_op->poll)(f.file, wait);
+
+            // // Finally report if there's input data available (2) or not (1)
+            igloo_hypercall(1035, (uint32_t)((mask & POLLIN_SET) && (in & bit)) != 0 ? 2 : 1);
 					}
 
-          // Our 4th arg (yes, in 1035 for SELECT), we report
-          // if there's INPUT data for this FD. We don't care
-          // about output or errors. I think.
-          igloo_hypercall(1031, (uint32_t)task_pid_nr(current));
-          igloo_hypercall(1032, (uint32_t)task_tgid_nr(current));
-          igloo_hypercall(1033, (uint32_t)f.file);
-          igloo_hypercall(1035, (uint32_t)(mask & POLLIN_SET) && (in & bit));
 
 
 					fdput(f);
@@ -792,10 +794,22 @@ static inline unsigned int do_pollfd(struct pollfd *pollfd, poll_table *pwait,
 		mask = POLLNVAL;
 		if (f.file) {
 			mask = DEFAULT_POLLMASK;
+
 			if (f.file->f_op->poll) {
 				pwait->_key = pollfd->events|POLLERR|POLLHUP;
 				pwait->_key |= busy_flag;
+
+        // POLL: Finish with 1034. 0 before, 2 after with data, 1 after with no data
+        igloo_hypercall(1031, (uint32_t)task_pid_nr(current));
+        igloo_hypercall(1032, (uint32_t)task_tgid_nr(current));
+        igloo_hypercall(1033, (uint32_t)f.file);
+        igloo_hypercall(1034, (uint32_t)0); // 0: pre-poll
+
 				mask = f.file->f_op->poll(f.file, pwait);
+
+        // Post-poll, report 1 if data, or 2 if none
+        igloo_hypercall(1034, (uint32_t) (((mask & POLLIN) == POLLIN) ? 2 : 1));
+
 				if (mask & busy_flag)
 					*can_busy_poll = true;
 			}
@@ -846,35 +860,16 @@ static int do_poll(struct poll_list *list, struct poll_wqueues *wait,
 				 * this. They'll get immediately deregistered
 				 * when we break out and return.
 				 */
-        uint32_t filep = 0;
-        struct fd f = fdget(pfd);
-        filep = (uint32_t)f.file;
-        fdput(f);
-
 				if (do_pollfd(pfd, pt, &can_busy_loop,
 					      busy_flag)) {
-
-          if (filep) {
-            igloo_hypercall(1031, (uint32_t)task_pid_nr(current));
-            igloo_hypercall(1032, (uint32_t)task_tgid_nr(current));
-            igloo_hypercall(1033, (uint32_t)filep);
-            igloo_hypercall(1034, (uint32_t)1);
-          }
-
 					count++;
 					pt->_qproc = NULL;
 					/* found something, stop busy polling */
 					busy_flag = 0;
 					can_busy_loop = false;
-				} else if (filep) {
-          // Poll said no
-          igloo_hypercall(1031, (uint32_t)task_pid_nr(current));
-          igloo_hypercall(1032, (uint32_t)task_tgid_nr(current));
-          igloo_hypercall(1033, (uint32_t)filep);
-          igloo_hypercall(1034, (uint32_t)0);
-        }
 			}
 		}
+    }
 		/*
 		 * All waiters have already been registered, so don't provide
 		 * a poll_table->_qproc to them on the next loop iteration.
