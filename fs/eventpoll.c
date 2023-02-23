@@ -42,6 +42,7 @@
 #include <linux/seq_file.h>
 #include <linux/compat.h>
 #include <linux/rculist.h>
+#include <linux/hypercall.h>
 
 /*
  * LOCKING:
@@ -1938,6 +1939,11 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
 					goto error_tgt_fput;
 				}
 			} else
+          // We're *ADDING* something, so we don't really want to hypercall yet
+          //igloo_hypercall(1031, (uint32_t)task_pid_nr(current));
+          //igloo_hypercall(1032, (uint32_t)task_tgid_nr(current));
+          //igloo_hypercall(1033, (uint32_t)tf.file); // TF or F?
+
 				list_add(&tf.file->f_tfile_llink,
 							&tfile_check_list);
 			mutex_lock_nested(&ep->mtx, 0);
@@ -2008,6 +2014,7 @@ SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
 	int error;
 	struct fd f;
 	struct eventpoll *ep;
+	struct rb_node *rbp;
 
 	/* The maximum number of event must be greater than zero */
 	if (maxevents <= 0 || maxevents > EP_MAX_EVENTS)
@@ -2035,6 +2042,19 @@ SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
 	 * our own data structure.
 	 */
 	ep = f.file->private_data;
+
+
+  /* IGLOO: let's enumerate FDs in this epoller. TODO: report results for each FD */
+  
+	mutex_lock(&ep->mtx);
+	for (rbp = rb_first(&ep->rbr); rbp; rbp = rb_next(rbp)) {
+	  struct epitem *epi;
+		epi = rb_entry(rbp, struct epitem, rbn);
+    igloo_hypercall(1031, (uint32_t)task_pid_nr(current));
+    igloo_hypercall(1032, (uint32_t)task_tgid_nr(current));
+    igloo_hypercall(1036, (uint32_t)epi->ffd.file);
+  }
+	mutex_unlock(&ep->mtx);
 
 	/* Time to fish for events ... */
 	error = ep_poll(ep, events, maxevents, timeout);
