@@ -23,6 +23,8 @@ cat panda_profile.mipseb >> $PROF
 echo "[mipsel]" >> $PROF
 cat panda_profile.mipsel >> $PROF
 
+cp ./vmlinux.*.json.xz kernels/
+
 cp console.bins/* kernels/
 
 echo "Built by $(whoami) on $(date) at version $(git describe HEAD)" > kernels/README.txt
