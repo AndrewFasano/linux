@@ -21,6 +21,7 @@ CROSS_CC=/opt/cross/fd/${ARCH}-linux-musl${ABI}/bin/${ARCH}-linux-musl${ABI}-
 
 PANDA=~/git/panda
 OUTDIR=~/git/HyDE/fws/
+DWARF2JSON=~/git/dwarf2json/dwarf2json
 
 # MIPS: make malta_kvm_defconfig, then enable vsockets and debug_info
 
@@ -43,3 +44,11 @@ cp build/${ARCH}/vmlinux ${OUTDIR}/vmlinux4.${ARCH}
 
 echo "[${ARCH}]" > ${OUTDIR}/${ARCH}_profile4.conf 
 cat panda_profile.${ARCH} >> ${OUTDIR}/${ARCH}_profile4.conf 
+
+echo 'Building volatility profile'
+#dwarf2json wants a newer go than ships with Ubuntu 20.04, so I did this:
+#mkdir -p ~/go-1.14.2
+#wget -c https://dl.google.com/go/go1.14.2.linux-amd64.tar.gz -O - | tar -xz -C ~/go-1.14.2
+#~/go-1.14.2/go/bin/go
+DWARF2JSON=~/git/dwarf2json/dwarf2json
+${DWARF2JSON} linux build/${ARCH}/vmlinux | xz - > ./vmlinux.${ARCH}.json.xz
