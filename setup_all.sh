@@ -23,6 +23,7 @@ cat panda_profile.mipseb >> $PROF
 echo "[mipsel]" >> $PROF
 cat panda_profile.mipsel >> $PROF
 
+mv ./vmlinux.arm.json.xz ./vmlinux.armel.json.xz
 cp ./vmlinux.*.json.xz kernels/
 
 cp console.bins/* kernels/
