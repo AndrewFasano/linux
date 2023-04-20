@@ -51,4 +51,4 @@ echo 'Building volatility profile'
 #wget -c https://dl.google.com/go/go1.14.2.linux-amd64.tar.gz -O - | tar -xz -C ~/go-1.14.2
 #~/go-1.14.2/go/bin/go
 DWARF2JSON=~/git/dwarf2json/dwarf2json
-${DWARF2JSON} linux build/${ARCH}/vmlinux | xz - > ./vmlinux.${ARCH}.json.xz
+${DWARF2JSON} linux --elf build/${ARCH}/vmlinux | xz - > ./vmlinux.${ARCH}.json.xz

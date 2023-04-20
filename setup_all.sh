@@ -26,6 +26,6 @@ cat panda_profile.mipsel >> $PROF
 mv ./vmlinux.arm.json.xz ./vmlinux.armel.json.xz
 cp ./vmlinux.*.json.xz kernels/
 
-cp console.bins/* kernels/
+cp -a console.bins/* kernels/
 
 echo "Built by $(whoami) on $(date) at version $(git describe HEAD)" > kernels/README.txt
